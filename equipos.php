@@ -107,8 +107,11 @@ $equipos = $stmt->fetchAll();
         td { padding: 15px; border-bottom: 1px solid #eef; vertical-align: middle; }
         tr:hover { background: #f8f9fa; }
         .badge { font-size: 0.8rem; padding: 0.4em 0.8em; border-radius: 20px; font-weight: 600; }
-        .bg-success { background-color: #e7f5f2; color: #008a6e; } .bg-warning { background-color: #fff8e1; color: #f59e0b; }
-        .bg-secondary { background-color: #f1f3f5; color: #555; } .bg-danger { background-color: #fff1f2; color: #d93749; }
+        /* === CAMBIO REALIZADO AQUÍ === */
+        .bg-success { background-color: #e7f5f2; color: #212529; } 
+        .bg-warning { background-color: #fff8e1; color: #212529; }
+        .bg-secondary { background-color: #f1f3f5; color: #212529; } 
+        .bg-danger { background-color: #fff1f2; color: #212529; }
         .modal-header { border-bottom: none; }
         .modal-footer { border-top: 1px solid #eef; padding-top: 1rem; }
         .modal-content { border: none; border-radius: var(--border-radius); }
@@ -157,14 +160,25 @@ $equipos = $stmt->fetchAll();
                         <?php if (empty($equipos)): ?>
                             <tr><td colspan="7" class="text-center p-5"><p class="text-muted mb-0">No se encontraron equipos. Intente ajustar los filtros.</p></td></tr>
                         <?php else: ?>
+                            <?php
+                            $estado_clases = [
+                                'Activo' => 'success',
+                                'Inactivo' => 'secondary',
+                                'Mantenimiento' => 'warning',
+                                'Dañado' => 'danger'
+                            ];
+                            ?>
                             <?php foreach ($equipos as $equipo): ?>
+                                <?php
+                                $clase_estado = $estado_clases[$equipo['estado']] ?? 'secondary';
+                                ?>
                                 <tr>
                                     <td><strong><?= htmlspecialchars($equipo['nombre']); ?></strong><br><small class="text-muted"><?= htmlspecialchars($equipo['marca']); ?> <?= htmlspecialchars($equipo['modelo']); ?></small></td>
                                     <td><?= htmlspecialchars($equipo['tipo_nombre']); ?></td>
                                     <td><code><?= htmlspecialchars($equipo['numero_serie']); ?></code></td>
                                     <td><?= !empty($equipo['persona_responsable']) ? htmlspecialchars($equipo['persona_responsable']) : '<span class="text-muted">N/A</span>'; ?></td>
                                     <td><?= htmlspecialchars($equipo['ubicacion']); ?></td>
-                                    <td><span class="badge bg-<?= strtolower($equipo['estado']); ?>"><?= $equipo['estado']; ?></span></td>
+                                    <td><span class="badge bg-<?= $clase_estado; ?>"><?= htmlspecialchars($equipo['estado']); ?></span></td>
                                     <td class="table-actions">
                                         <div class="btn-group">
                                             <a href="revisar_equipo.php?id=<?= $equipo['id']; ?>" class="btn btn-xs btn-outline-primary" title="Revisar"><i class="fas fa-clipboard-check"></i></a>

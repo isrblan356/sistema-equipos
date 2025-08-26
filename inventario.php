@@ -5,12 +5,37 @@ $pdo = conectarDB();
 
 // --- CREACIÓN DE TABLAS INICIALES ---
 $pdo->exec("CREATE TABLE IF NOT EXISTS productos ( id INT AUTO_INCREMENT PRIMARY KEY, nombre VARCHAR(255) NOT NULL, codigo VARCHAR(100) NOT NULL UNIQUE, descripcion TEXT, stock_actual INT DEFAULT 0, stock_minimo INT DEFAULT 0, fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP )");
-$pdo->exec("CREATE TABLE IF NOT EXISTS movimientos ( id INT AUTO_INCREMENT PRIMARY KEY, producto_id INT NOT NULL, tipo ENUM('entrada', 'salida') NOT NULL, cantidad INT NOT NULL, fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE CASCADE )");
+$pdo->exec("CREATE TABLE IF NOT EXISTS movimientos ( id INT AUTO_INCREMENT PRIMARY KEY, producto_id INT NOT NULL, tipo ENUM('entrada', 'salida') NOT NULL, cantidad INT NOT NULL, tecnico_id INT NULL, fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE CASCADE )");
 
 // --- FUNCIONES ---
 function limpiar($dato) { return htmlspecialchars(trim($dato)); }
 function obtenerEstadisticasSede($pdo, $tabla_productos, $tabla_movimientos) { $hoy = date('Y-m-d'); $stats = []; $stats['total_productos'] = $pdo->query("SELECT COUNT(*) FROM `$tabla_productos`")->fetchColumn(); $stats['stock_bajo'] = $pdo->query("SELECT COUNT(*) FROM `$tabla_productos` WHERE stock_actual <= stock_minimo AND stock_actual > 0")->fetchColumn(); $stats['sin_stock'] = $pdo->query("SELECT COUNT(*) FROM `$tabla_productos` WHERE stock_actual <= 0")->fetchColumn(); $stats['movimientos_hoy'] = $pdo->query("SELECT COUNT(*) FROM `$tabla_movimientos` WHERE DATE(fecha) = '$hoy'")->fetchColumn(); return $stats; }
 function hex2rgb($hex) { $hex = str_replace("#", "", $hex); if(strlen($hex) == 3) { $r = hexdec(substr($hex,0,1).substr($hex,0,1)); $g = hexdec(substr($hex,1,1).substr($hex,1,1)); $b = hexdec(substr($hex,2,1).substr($hex,2,1)); } else { $r = hexdec(substr($hex,0,2)); $g = hexdec(substr($hex,2,2)); $b = hexdec(substr($hex,4,2)); } return "$r, $g, $b"; }
+
+// --- OBTENER TÉCNICOS PARA EL SELECT ---
+$tecnicos = [];
+
+try {
+    // Obtener solo técnicos con estado 'activo'
+    $tecnicos_query = $pdo->query("SELECT id, nombre FROM tecnicos WHERE estado = 'activo' ORDER BY nombre");
+    if ($tecnicos_query) {
+        $tecnicos = $tecnicos_query->fetchAll(PDO::FETCH_ASSOC);
+    }
+} catch (Exception $e) {
+    try {
+        // Si hay error con el filtro de estado, intentar sin filtro
+        $tecnicos_query = $pdo->query("SELECT id, nombre FROM tecnicos ORDER BY nombre");
+        if ($tecnicos_query) {
+            $tecnicos = $tecnicos_query->fetchAll(PDO::FETCH_ASSOC);
+        }
+    } catch (Exception $e2) {
+        // Si todo falla, usar técnicos de ejemplo
+        $tecnicos = [
+            ['id' => 1, 'nombre' => 'Técnico de Ejemplo 1'],
+            ['id' => 2, 'nombre' => 'Técnico de Ejemplo 2']
+        ];
+    }
+}
 
 // --- CONFIGURACIÓN DINÁMICA DE SEDES ---
 $sedes_query = $pdo->query("SELECT * FROM sedes WHERE activa = 1 ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
@@ -28,7 +53,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['accion']) && $vista_ac
     if ($_POST['accion'] == 'agregar') { $stmt = $pdo->prepare("INSERT INTO `$tabla_productos` (nombre, codigo, descripcion, stock_actual, stock_minimo) VALUES (?, ?, ?, ?, ?)"); $stmt->execute([limpiar($_POST['nombre']), limpiar($_POST['codigo']), limpiar($_POST['descripcion']), intval($_POST['stock_actual']), intval($_POST['stock_minimo'])]); }
     elseif ($_POST['accion'] == 'editar') { $stmt = $pdo->prepare("UPDATE `$tabla_productos` SET nombre=?, codigo=?, descripcion=?, stock_minimo=? WHERE id=?"); $stmt->execute([limpiar($_POST['nombre']), limpiar($_POST['codigo']), limpiar($_POST['descripcion']), intval($_POST['stock_minimo']), intval($_POST['id'])]); }
     elseif ($_POST['accion'] == 'eliminar') { $stmt = $pdo->prepare("DELETE FROM `$tabla_productos` WHERE id=?"); $stmt->execute([intval($_POST['id'])]); }
-    elseif ($_POST['accion'] == 'movimiento') { $producto_id = intval($_POST['producto_id']); $tipo = $_POST['tipo']; $cantidad = intval($_POST['cantidad']); $stmt = $pdo->prepare("INSERT INTO `$tabla_movimientos` (producto_id, tipo, cantidad) VALUES (?, ?, ?)"); $stmt->execute([$producto_id, $tipo, $cantidad]); $update = $tipo === 'entrada' ? "UPDATE `$tabla_productos` SET stock_actual = stock_actual + ? WHERE id = ?" : "UPDATE `$tabla_productos` SET stock_actual = stock_actual - ? WHERE id = ?"; $stmt = $pdo->prepare($update); $stmt->execute([$cantidad, $producto_id]); }
+    elseif ($_POST['accion'] == 'movimiento') { 
+        $producto_id = intval($_POST['producto_id']); 
+        $tipo = $_POST['tipo']; 
+        $cantidad = intval($_POST['cantidad']); 
+        $tecnico_id = !empty($_POST['tecnico_id']) ? intval($_POST['tecnico_id']) : NULL;
+        
+        $stmt = $pdo->prepare("INSERT INTO `$tabla_movimientos` (producto_id, tipo, cantidad, tecnico_id) VALUES (?, ?, ?, ?)"); 
+        $stmt->execute([$producto_id, $tipo, $cantidad, $tecnico_id]); 
+        
+        $update = $tipo === 'entrada' ? "UPDATE `$tabla_productos` SET stock_actual = stock_actual + ? WHERE id = ?" : "UPDATE `$tabla_productos` SET stock_actual = stock_actual - ? WHERE id = ?"; 
+        $stmt = $pdo->prepare($update); 
+        $stmt->execute([$cantidad, $producto_id]); 
+    }
     header("Location: inventario.php?sede_id=" . $vista_actual); exit();
 }
 
@@ -36,13 +73,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['accion']) && $vista_ac
 if ($vista_actual == 'vista_inventario_dashboard') {
     $stats_por_sede = []; foreach($sedes_config as $id => $sede) { $stats_por_sede[$id] = obtenerEstadisticasSede($pdo, $sede['tabla_productos'], $sede['tabla_movimientos']); }
     $totales = [ 'total_productos' => array_sum(array_column($stats_por_sede, 'total_productos')), 'stock_bajo'      => array_sum(array_column($stats_por_sede, 'stock_bajo')), 'sin_stock'       => array_sum(array_column($stats_por_sede, 'sin_stock')), 'movimientos_hoy' => array_sum(array_column($stats_por_sede, 'movimientos_hoy')) ];
-    $ultimos_movimientos = []; foreach($sedes_config as $id => $sede) { $movs_query = $pdo->query("SELECT m.*, p.nombre as producto_nombre, '{$sede['nombre']}' as sede_nombre FROM `{$sede['tabla_movimientos']}` m JOIN `{$sede['tabla_productos']}` p ON m.producto_id = p.id ORDER BY m.fecha DESC LIMIT 5"); if($movs_query) { $ultimos_movimientos = array_merge($ultimos_movimientos, $movs_query->fetchAll(PDO::FETCH_ASSOC)); } }
+    $ultimos_movimientos = []; 
+    foreach($sedes_config as $id => $sede) { 
+        $movs_query = $pdo->query("SELECT m.*, p.nombre as producto_nombre, t.nombre as tecnico_nombre, '{$sede['nombre']}' as sede_nombre FROM `{$sede['tabla_movimientos']}` m JOIN `{$sede['tabla_productos']}` p ON m.producto_id = p.id LEFT JOIN tecnicos t ON m.tecnico_id = t.id ORDER BY m.fecha DESC LIMIT 5"); 
+        if($movs_query) { 
+            $ultimos_movimientos = array_merge($ultimos_movimientos, $movs_query->fetchAll(PDO::FETCH_ASSOC)); 
+        } 
+    }
     usort($ultimos_movimientos, fn($a, $b) => strtotime($b['fecha']) - strtotime($a['fecha'])); $ultimos_movimientos = array_slice($ultimos_movimientos, 0, 10);
 } else {
     if (!isset($sedes_config[$vista_actual])) { header("Location: inventario.php"); exit(); }
     $config = $sedes_config[$vista_actual]; $tabla_productos = $config['tabla_productos']; $tabla_movimientos = $config['tabla_movimientos'];
     $productos = $pdo->query("SELECT * FROM `$tabla_productos` ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC);
-    $movimientos = $pdo->query("SELECT m.*, p.nombre FROM `$tabla_movimientos` m JOIN `$tabla_productos` p ON m.producto_id = p.id ORDER BY m.fecha DESC LIMIT 10")->fetchAll(PDO::FETCH_ASSOC);
+    $movimientos = $pdo->query("SELECT m.*, p.nombre, t.nombre as tecnico_nombre FROM `$tabla_movimientos` m JOIN `$tabla_productos` p ON m.producto_id = p.id LEFT JOIN tecnicos t ON m.tecnico_id = t.id ORDER BY m.fecha DESC LIMIT 10")->fetchAll(PDO::FETCH_ASSOC);
     $stats_sede = obtenerEstadisticasSede($pdo, $tabla_productos, $tabla_movimientos);
     $total_productos = $stats_sede['total_productos']; $movimientos_hoy = $stats_sede['movimientos_hoy']; $stock_bajo = $stats_sede['stock_bajo']; $sin_stock = $stats_sede['sin_stock'];
 }
@@ -114,6 +157,13 @@ if ($vista_actual != 'vista_inventario_dashboard' && isset($sedes_config[$vista_
         input, select, textarea { width: 100%; padding: 12px; border: 2px solid #e1e5e9; border-radius: 8px; font-size: 1rem; transition: all 0.3s ease; background: #fdfdfd; }
         input:focus, select:focus, textarea:focus { outline: none; border-color: <?= $color_actual_hex ?>; box-shadow: 0 0 0 4px rgba(<?= $color_actual_rgb ?>, 0.2); }
         
+        /* ===== ESTILOS PARA TÉCNICOS ===== */
+        .tecnico-badge { background: linear-gradient(45deg, #6c757d, #495057); color: white; padding: 3px 10px; border-radius: 15px; font-size: 0.8rem; font-weight: 500; display: inline-block; }
+        .form-group.tecnico-select { position: relative; }
+        .form-group.tecnico-select .icon-user { position: absolute; left: 12px; top: 38px; color: <?= $color_actual_hex ?>; z-index: 1; pointer-events: none; }
+        .form-group.tecnico-select select { padding-left: 40px; position: relative; z-index: 2; }
+        .form-group.tecnico-select label { position: relative; z-index: 0; }
+        
         /* ===== SECCIÓN DE ESTILOS NUEVA Y MEJORADA PARA MOVIMIENTOS ===== */
         .movement-list { padding: 0; list-style: none; }
         .movement-item { display: flex; align-items: center; gap: 1rem; padding: 1rem 0; border-bottom: 1px solid #f0f0f0; }
@@ -123,7 +173,7 @@ if ($vista_actual != 'vista_inventario_dashboard' && isset($sedes_config[$vista_
         .movement-icon.salida { background-color: #dc3545; }
         .movement-details { flex-grow: 1; }
         .movement-details h4 { font-size: 1rem; font-weight: 600; color: #2c3e50; margin: 0 0 4px 0; }
-        .movement-details p { font-size: 0.85rem; color: #777; margin: 0; display: flex; align-items: center; gap: 8px; }
+        .movement-details p { font-size: 0.85rem; color: #777; margin: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
         .sede-badge-inline { padding: 3px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; background: #e9ecef; color: #495057; }
         .movement-quantity { text-align: right; }
         .movement-quantity strong { font-size: 1.2rem; font-weight: 700; color: #333; }
@@ -162,7 +212,6 @@ if ($vista_actual != 'vista_inventario_dashboard' && isset($sedes_config[$vista_
             <div class="stats-overview">
                 <h2 class="stats-title"><i class="fas fa-chart-pie"></i> Resumen General</h2>
                 <div class="stats-grid">
-                    <div class="stat-card primary"><i class="fas fa-cubes"></i><h3><?= number_format($totales['total_productos']) ?></h3><p>Total de Productos</p></div>
                     <div class="stat-card success"><i class="fas fa-exchange-alt"></i><h3><?= number_format($totales['movimientos_hoy']) ?></h3><p>Movimientos Hoy</p></div>
                     <div class="stat-card warning"><i class="fas fa-exclamation-triangle"></i><h3><?= number_format($totales['stock_bajo']) ?></h3><p>Productos con Stock Bajo</p></div>
                     <div class="stat-card danger"><i class="fas fa-times-circle"></i><h3><?= number_format($totales['sin_stock']) ?></h3><p>Productos Sin Stock</p></div>
@@ -201,6 +250,9 @@ if ($vista_actual != 'vista_inventario_dashboard' && isset($sedes_config[$vista_
                                             <p>
                                                 <i class="far fa-calendar-alt"></i> <?= date('d/m/Y H:i', strtotime($mov['fecha'])) ?>
                                                 <span class="sede-badge-inline"><?= htmlspecialchars($mov['sede_nombre']) ?></span>
+                                                <?php if (!empty($mov['tecnico_nombre'])): ?>
+                                                    <span class="tecnico-badge"><i class="fas fa-user"></i> <?= htmlspecialchars($mov['tecnico_nombre']) ?></span>
+                                                <?php endif; ?>
                                             </p>
                                         </div>
                                         <div class="movement-quantity">
@@ -216,11 +268,12 @@ if ($vista_actual != 'vista_inventario_dashboard' && isset($sedes_config[$vista_
                 <!-- ===== FIN DE LA SECCIÓN DE MOVIMIENTOS ===== -->
                 <div class="quick-actions">
                     <h3><i class="fas fa-bolt"></i> Acciones Rápidas</h3>
-                    <div class="action-buttons"><a href="reportes_2.php" class="btn btn-primary" style="background: linear-gradient(45deg, #17a2b8, #117a8b);"><i class="fas fa-chart-line"></i> Ver Reportes Detallados</a><a href="configuracion.php" class="btn btn-primary" style="background: linear-gradient(45deg, #6c757d, #495057);"><i class="fas fa-cog"></i> Configuración del Sistema</a></div>
+                    <div class="action-buttons"><a href="reportes_2.php" class="btn btn-primary" style="background: linear-gradient(45deg, #17a2b8, #117a8b);"><i class="fas fa-chart-line"></i> Ver Reportes Detallados</a><a href="configuracion.php" class="btn btn-primary" style="background: linear-gradient(45deg, #6c757d, #495057);"><i class="fas fa-cog"></i> Configuración del Sistema</a>
+					<a href="tecnicos.php" class="btn btn-primary" style="background: linear-gradient(45deg, #6c757d, #495057);"><i class="fas fa-users"></i> Gestión de Técnicos</a></div>
                 </div>
             </div>
         <?php else: ?>
-            <!-- VISTA DE SEDE ESPECÍFICA (sin cambios aquí) -->
+            <!-- VISTA DE SEDE ESPECÍFICA -->
             <div class="stats-grid">
                 <div class="stat-card info"><i class="fas fa-cube"></i><h3><?= $total_productos ?></h3><p>Total Productos</p></div>
                 <div class="stat-card success"><i class="fas fa-exchange-alt"></i><h3><?= $movimientos_hoy ?></h3><p>Movimientos Hoy</p></div>
@@ -248,6 +301,20 @@ if ($vista_actual != 'vista_inventario_dashboard' && isset($sedes_config[$vista_
                         <div class="form-grid">
                             <div class="form-group"><label>Tipo de Movimiento</label><select name="tipo" required><option value="entrada">Entrada (+)</option><option value="salida">Salida (-)</option></select></div>
                             <div class="form-group"><label>Cantidad</label><input type="number" name="cantidad" min="1" required></div>
+                        </div>
+                        <div class="form-group tecnico-select">
+                            <label><i class="fas fa-user"></i> Técnico Responsable</label>
+                            <i class="fas fa-user icon-user"></i>
+                            <select name="tecnico_id">
+                                <option value="">Seleccionar técnico (opcional)...</option>
+                                <?php if (!empty($tecnicos)): ?>
+                                    <?php foreach ($tecnicos as $tecnico): ?>
+                                        <option value="<?= $tecnico['id'] ?>"><?= htmlspecialchars($tecnico['nombre']) ?></option>
+                                    <?php endforeach; ?>
+                                <?php else: ?>
+                                    <option value="" disabled>No hay técnicos disponibles</option>
+                                <?php endif; ?>
+                            </select>
                         </div>
                         <input type="hidden" name="accion" value="movimiento"><button class="btn btn-primary" style="margin-top:1rem;"><i class="fas fa-check"></i> Registrar Movimiento</button>
                     </form>
@@ -278,13 +345,21 @@ if ($vista_actual != 'vista_inventario_dashboard' && isset($sedes_config[$vista_
             <div class="table-container">
                 <h3><i class="fas fa-history"></i> Historial de Movimientos Recientes</h3>
                 <table>
-                    <thead><tr><th>ID</th><th>Producto</th><th>Tipo</th><th>Cantidad</th><th>Fecha</th></tr></thead>
+                    <thead><tr><th>ID</th><th>Producto</th><th>Tipo</th><th>Cantidad</th><th>Técnico</th><th>Fecha</th></tr></thead>
                     <tbody>
                         <?php foreach ($movimientos as $m): ?>
                         <tr>
                             <td><?= $m['id'] ?></td><td><?= htmlspecialchars($m['nombre']) ?></td>
                             <td><span class="<?= $m['tipo'] == 'entrada' ? 'movement-in' : 'movement-out' ?>"><i class="fas fa-<?= $m['tipo'] == 'entrada' ? 'arrow-up' : 'arrow-down' ?>"></i> <?= ucfirst($m['tipo']) ?></span></td>
-                            <td><strong><?= $m['cantidad'] ?></strong></td><td><?= date('d/m/Y H:i', strtotime($m['fecha'])) ?></td>
+                            <td><strong><?= $m['cantidad'] ?></strong></td>
+                            <td>
+                                <?php if (!empty($m['tecnico_nombre'])): ?>
+                                    <span class="tecnico-badge"><i class="fas fa-user"></i> <?= htmlspecialchars($m['tecnico_nombre']) ?></span>
+                                <?php else: ?>
+                                    <span style="color: #999; font-style: italic;">Sin asignar</span>
+                                <?php endif; ?>
+                            </td>
+                            <td><?= date('d/m/Y H:i', strtotime($m['fecha'])) ?></td>
                         </tr>
                         <?php endforeach; ?>
                     </tbody>
@@ -292,5 +367,29 @@ if ($vista_actual != 'vista_inventario_dashboard' && isset($sedes_config[$vista_
             </div>
         <?php endif; ?>
     </div>
+
+    <script>
+        // Script para mejorar la experiencia del usuario al seleccionar técnicos
+        document.addEventListener('DOMContentLoaded', function() {
+            const tipoSelect = document.querySelector('select[name="tipo"]');
+            const tecnicoLabel = document.querySelector('.form-group.tecnico-select label');
+            
+            if (tipoSelect && tecnicoLabel) {
+                function actualizarLabelTecnico() {
+                    const tipo = tipoSelect.value;
+                    if (tipo === 'entrada') {
+                        tecnicoLabel.innerHTML = '<i class="fas fa-user"></i> Técnico que entrega';
+                    } else if (tipo === 'salida') {
+                        tecnicoLabel.innerHTML = '<i class="fas fa-user"></i> Técnico que recibe';
+                    } else {
+                        tecnicoLabel.innerHTML = '<i class="fas fa-user"></i> Técnico Responsable';
+                    }
+                }
+                
+                tipoSelect.addEventListener('change', actualizarLabelTecnico);
+                actualizarLabelTecnico(); // Ejecutar al cargar la página
+            }
+        });
+    </script>
 </body>
 </html>

@@ -17,6 +17,107 @@ if ($esAdmin && ($vista === 'permisos' || $vista === 'usuarios')) {
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['accion'])) {
         try {
+            if ($_POST['accion'] == 'exportar_bd') {
+                // Usar la misma configuración de config.php
+                $fecha = date('Y-m-d_H-i-s');
+                $nombreArchivo = "backup_sistema-equipos_{$fecha}.sql";
+                
+                try {
+                    // Método alternativo usando PDO para generar el backup
+                    $backup = "-- Backup de Base de Datos Sistema-Equipos\n";
+                    $backup .= "-- Generado el: " . date('Y-m-d H:i:s') . "\n\n";
+                    $backup .= "SET FOREIGN_KEY_CHECKS = 0;\n";
+                    $backup .= "SET SQL_MODE = 'NO_AUTO_VALUE_ON_ZERO';\n\n";
+                    
+                    // Obtener todas las tablas
+                    $tablas = $pdo->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
+                    
+                    foreach ($tablas as $tabla) {
+                        // Estructura de la tabla
+                        $backup .= "-- Estructura de tabla `{$tabla}`\n";
+                        $backup .= "DROP TABLE IF EXISTS `{$tabla}`;\n";
+                        
+                        $createTable = $pdo->query("SHOW CREATE TABLE `{$tabla}`")->fetch();
+                        $backup .= $createTable['Create Table'] . ";\n\n";
+                        
+                        // Datos de la tabla
+                        $backup .= "-- Datos de tabla `{$tabla}`\n";
+                        $datos = $pdo->query("SELECT * FROM `{$tabla}`")->fetchAll(PDO::FETCH_ASSOC);
+                        
+                        if (!empty($datos)) {
+                            foreach ($datos as $fila) {
+                                $valores = array_map(function($valor) use ($pdo) {
+                                    return $valor === null ? 'NULL' : $pdo->quote($valor);
+                                }, $fila);
+                                
+                                $backup .= "INSERT INTO `{$tabla}` (`" . implode('`, `', array_keys($fila)) . "`) VALUES (" . implode(', ', $valores) . ");\n";
+                            }
+                        }
+                        $backup .= "\n";
+                    }
+                    
+                    $backup .= "SET FOREIGN_KEY_CHECKS = 1;\n";
+                    
+                    // Enviar el archivo para descarga
+                    header('Content-Type: application/sql');
+                    header('Content-Disposition: attachment; filename="' . $nombreArchivo . '"');
+                    header('Content-Length: ' . strlen($backup));
+                    echo $backup;
+                    exit();
+                    
+                } catch (Exception $e) {
+                    throw new Exception("Error al generar el backup: " . $e->getMessage());
+                }
+            }
+            
+            if ($_POST['accion'] == 'importar_bd') {
+                if (!isset($_FILES['archivo_sql']) || $_FILES['archivo_sql']['error'] !== UPLOAD_ERR_OK) {
+                    throw new Exception("Error al subir el archivo.");
+                }
+                
+                $archivo = $_FILES['archivo_sql'];
+                $extension = strtolower(pathinfo($archivo['name'], PATHINFO_EXTENSION));
+                
+                if ($extension !== 'sql') {
+                    throw new Exception("Solo se permiten archivos .sql");
+                }
+                
+                // Leer el contenido del archivo
+                $contenidoSQL = file_get_contents($archivo['tmp_name']);
+                
+                if ($contenidoSQL === false) {
+                    throw new Exception("No se pudo leer el archivo SQL.");
+                }
+                
+                // Deshabilitar verificaciones temporalmente
+                $pdo->exec('SET FOREIGN_KEY_CHECKS = 0;');
+                $pdo->exec('SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";');
+                
+                // Dividir las consultas SQL
+                $consultas = explode(';', $contenidoSQL);
+                
+                $errores = [];
+                foreach ($consultas as $consulta) {
+                    $consulta = trim($consulta);
+                    if (!empty($consulta) && !preg_match('/^--/', $consulta)) {
+                        try {
+                            $pdo->exec($consulta);
+                        } catch (Exception $e) {
+                            $errores[] = "Error en consulta: " . $e->getMessage();
+                        }
+                    }
+                }
+                
+                // Rehabilitar verificaciones
+                $pdo->exec('SET FOREIGN_KEY_CHECKS = 1;');
+                
+                if (empty($errores)) {
+                    $_SESSION['mensaje_flash'] = 'Base de datos importada exitosamente.';
+                } else {
+                    $_SESSION['error_flash'] = 'Importación completada con errores: ' . implode(', ', array_slice($errores, 0, 3));
+                }
+            }
+            
             if ($_POST['accion'] == 'guardar_permisos') {
                 $rol_id = intval($_POST['rol_id']);
                 if ($rol_id > 1) {
@@ -111,6 +212,8 @@ if ($esAdmin && ($vista === 'permisos' || $vista === 'usuarios')) {
         .btn-xs { padding: 6px 12px; font-size: 0.75rem; border-radius: 20px;}
         .btn-primary { background: linear-gradient(45deg, var(--primary-color), var(--secondary-color)); color: white; }
         .btn-secondary { background: #6c757d; color: white; }
+        .btn-success { background: #10b981; color: white; }
+        .btn-danger { background: #ef4444; color: white; }
         .btn-outline-warning { color: #f59e0b; border: 1px solid #fde68a; background: #fffbeb; }
         .btn-outline-warning:hover { background: #f59e0b; color: white; }
         .btn-outline-info { color: #3b82f6; border: 1px solid #bfdbfe; background: #eff6ff; }
@@ -151,6 +254,11 @@ if ($esAdmin && ($vista === 'permisos' || $vista === 'usuarios')) {
         .slider:before { position: absolute; content: ""; height: 20px; width: 20px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
         input:checked + .slider { background-color: var(--primary-color); }
         input:checked + .slider:before { transform: translateX(22px); }
+        .backup-section { background: var(--card-bg); border-radius: var(--border-radius); padding: 2rem; box-shadow: var(--shadow); margin-bottom: 2rem; border-left: 4px solid #10b981; }
+        .backup-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+        @media (max-width: 768px) {
+            .backup-actions { grid-template-columns: 1fr; }
+        }
     </style>
 </head>
 <body>
@@ -179,10 +287,37 @@ if ($esAdmin && ($vista === 'permisos' || $vista === 'usuarios')) {
         <?php elseif ($esAdmin && ($vista === 'permisos' || $vista === 'usuarios')): ?>
             <div class="page-header"><h2>Panel de Administración</h2><a href="dashboard.php?vista=principal" class="btn btn-secondary"><i class="fas fa-arrow-left"></i> Volver</a></div>
             <?= $mensajeHtml; ?>
+            
+            <?php if ($vista === 'permisos'): ?>
+                <!-- Sección de Backup -->
+                <div class="backup-section">
+                    <h3><i class="fas fa-database"></i> Respaldo de Base de Datos</h3>
+                    <p class="text-muted mb-3">Exporta o importa la base de datos completa del sistema.</p>
+                    <div class="backup-actions">
+                        <div>
+                            <form method="POST" style="display: inline;">
+                                <input type="hidden" name="accion" value="exportar_bd">
+                                <button type="submit" class="btn btn-success w-100" onclick="return confirm('¿Deseas exportar toda la base de datos? Esto puede tomar unos momentos.');">
+                                    <i class="fas fa-download"></i> Exportar Base de Datos
+                                </button>
+                            </form>
+                            <small class="text-muted d-block mt-2">Descarga un backup completo en formato SQL</small>
+                        </div>
+                        <div>
+                            <button type="button" class="btn btn-danger w-100" data-bs-toggle="modal" data-bs-target="#modalImportarBD">
+                                <i class="fas fa-upload"></i> Importar Base de Datos
+                            </button>
+                            <small class="text-muted d-block mt-2">⚠️ Reemplazará todos los datos actuales</small>
+                        </div>
+                    </div>
+                </div>
+            <?php endif; ?>
+            
             <div class="card">
                 <ul class="nav nav-tabs">
                     <li class="nav-item"><a class="nav-link <?= $vista === 'permisos' ? 'active' : '' ?>" href="?vista=permisos">Roles y Permisos</a></li>
                     <li class="nav-item"><a class="nav-link <?= $vista === 'usuarios' ? 'active' : '' ?>" href="?vista=usuarios">Gestión de Usuarios</a></li>
+                    <li class="nav-item"><a class="nav-link" href="admin_actualizar.php">Actualizar Sistema</a></li>
                 </ul>
                 
                 <?php if ($vista === 'permisos'): ?>
@@ -231,6 +366,41 @@ if ($esAdmin && ($vista === 'permisos' || $vista === 'usuarios')) {
                     </div>
                 <?php endif; ?>
             </div>
+
+            <!-- Modal Importar Base de Datos -->
+            <?php if ($vista === 'permisos'): ?>
+                <div class="modal fade" id="modalImportarBD" tabindex="-1">
+                    <div class="modal-dialog modal-dialog-centered">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title"><i class="fas fa-upload"></i> Importar Base de Datos</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <form method="POST" enctype="multipart/form-data">
+                                <div class="modal-body">
+                                    <div class="alert alert-warning">
+                                        <i class="fas fa-exclamation-triangle"></i>
+                                        <strong>¡Advertencia!</strong> Esta acción reemplazará completamente todos los datos actuales de la base de datos. 
+                                        Es recomendable hacer un backup antes de proceder.
+                                    </div>
+                                    <input type="hidden" name="accion" value="importar_bd">
+                                    <div class="form-group">
+                                        <label>Seleccionar archivo SQL</label>
+                                        <input type="file" name="archivo_sql" class="form-control" accept=".sql" required>
+                                        <small class="text-muted">Solo se permiten archivos con extensión .sql</small>
+                                    </div>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                                    <button type="submit" class="btn btn-danger" onclick="return confirm('¿Estás completamente seguro? Esta acción eliminará todos los datos actuales y los reemplazará con los del archivo SQL.');">
+                                        <i class="fas fa-upload"></i> Importar y Reemplazar
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            <?php endif; ?>
 
             <!-- ===== INICIO: MODALES MOVIDOS AQUÍ DENTRO ===== -->
             <?php if ($vista === 'usuarios'): ?>
