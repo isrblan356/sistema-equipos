@@ -124,8 +124,9 @@ if ($esAdmin && ($vista === 'permisos' || $vista === 'usuarios')) {
                     $p_equipos = isset($_POST['permiso_equipos']) ? 1 : 0;
                     $p_inventario = isset($_POST['permiso_inventario']) ? 1 : 0;
                     $p_portatiles = isset($_POST['permiso_portatiles']) ? 1 : 0;
-                    $stmt = $pdo->prepare("UPDATE permisos SET permiso_equipos = ?, permiso_inventario = ?, permiso_portatiles = ? WHERE rol_id = ?");
-                    $stmt->execute([$p_equipos, $p_inventario, $p_portatiles, $rol_id]);
+					$p_compras = isset($_POST['permiso_compras']) ? 1 : 0;
+                    $stmt = $pdo->prepare("UPDATE permisos SET permiso_equipos = ?, permiso_inventario = ?, permiso_portatiles = ?, permiso_compras = ? WHERE rol_id = ?");
+                    $stmt->execute([$p_equipos, $p_inventario, $p_portatiles, $p_compras, $rol_id]);
                     $_SESSION['mensaje_flash'] = 'Permisos actualizados correctamente.';
                 }
             }
@@ -280,7 +281,9 @@ if ($esAdmin && ($vista === 'permisos' || $vista === 'usuarios')) {
                     <?php if (tienePermiso('permiso_equipos')): ?><a href="equipos.php" class="sistema-card"><div class="icon"><i class="fas fa-tools"></i></div><h3>Sistema de Equipos</h3><p>Gestión y mantenimiento de equipos.</p></a><?php endif; ?>
                     <?php if (tienePermiso('permiso_inventario')): ?><a href="inventario.php" class="sistema-card"><div class="icon"><i class="fas fa-boxes"></i></div><h3>Sistema de Inventario</h3><p>Control de stock y movimientos.</p></a><?php endif; ?>
                     <?php if (tienePermiso('permiso_portatiles')): ?><a href="portatiles.php" class="sistema-card"><div class="icon"><i class="fas fa-laptop"></i></div><h3>Inv. de Portátiles</h3><p>Revisión e inventario de laptops.</p></a><?php endif; ?>
+					<?php if (tienePermiso('permiso_compras')): ?><a href="inventario_compras.php" class="sistema-card"><div class="icon"><i class="fas fa-shopping-cart"></i></div><h3>Compras y Servicios</h3><p>Gestión de compras y proveedores</p></a><?php endif; ?>
                     <?php if (esAdmin()): ?><a href="?vista=permisos" class="sistema-card"><div class="icon"><i class="fas fa-users-cog"></i></div><h3>Admin y Permisos</h3><p>Gestionar usuarios y acceso a módulos.</p></a><?php endif; ?>
+					
                 </div>
             </div>
 
@@ -332,6 +335,7 @@ if ($esAdmin && ($vista === 'permisos' || $vista === 'usuarios')) {
                                         <div class="permiso-item"><span>Acceso a Módulo de Equipos</span><label class="form-switch"><input type="checkbox" name="permiso_equipos" <?= !empty($rol['permiso_equipos']) ? 'checked' : '' ?> <?= $rol['id'] == 1 ? 'disabled' : '' ?>><span class="slider"></span></label></div>
                                         <div class="permiso-item"><span>Acceso a Módulo de Inventario</span><label class="form-switch"><input type="checkbox" name="permiso_inventario" <?= !empty($rol['permiso_inventario']) ? 'checked' : '' ?> <?= $rol['id'] == 1 ? 'disabled' : '' ?>><span class="slider"></span></label></div>
                                         <div class="permiso-item"><span>Acceso a Módulo de Portátiles</span><label class="form-switch"><input type="checkbox" name="permiso_portatiles" <?= !empty($rol['permiso_portatiles']) ? 'checked' : '' ?> <?= $rol['id'] == 1 ? 'disabled' : '' ?>><span class="slider"></span></label></div>
+										<div class="permiso-item"><span>Acceso a Módulo de Compras y Servicios</span><label class="form-switch"><input type="checkbox" name="permiso_compras" <?= ($rol['id'] == 1 || !empty($rol['permiso_compras'])) ? 'checked' : '' ?> <?= $rol['id'] == 1 ? 'disabled' : '' ?>><span class="slider"></span></label></div>
                                     </div>
                                     <?php if ($rol['id'] != 1): ?><div class="permiso-footer"><button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-save"></i> Guardar Permisos</button></div><?php endif; ?>
                                 </form>
