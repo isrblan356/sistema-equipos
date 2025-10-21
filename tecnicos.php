@@ -68,8 +68,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['accion'])) {
 // =================================================================================
 // 4. OBTENCIÓN DE DATOS PARA LA VISTA
 // =================================================================================
-$stmt = $pdo->query("SELECT * FROM tecnicos ORDER BY nombre ASC");
+// MODIFICACIÓN: Excluir el técnico con ID 4 de la lista visible
+$stmt = $pdo->query("SELECT * FROM tecnicos WHERE id != 4 ORDER BY nombre ASC");
 $tecnicos = $stmt->fetchAll();
+
+// Opcional: Verificar/crear el registro de Maria Camila Ossa si no existe
+$stmt_verificar = $pdo->prepare("SELECT COUNT(*) as existe FROM tecnicos WHERE id = 4");
+$stmt_verificar->execute();
+$existe = $stmt_verificar->fetch()['existe'];
+
+if ($existe == 0) {
+    // Crear el registro si no existe
+    $stmt_crear = $pdo->prepare("INSERT INTO tecnicos (id, nombre, documento_identidad, telefono, estado) VALUES (4, 'Maria Camila Ossa', '', '', 'activo')");
+    $stmt_crear->execute();
+}
 
 ?>
 <!DOCTYPE html>
@@ -121,7 +133,7 @@ $tecnicos = $stmt->fetchAll();
             <h1><i class="fas fa-users-cog"></i> Gestión de Técnicos</h1>
             <div class="nav-buttons">
                 <a href="dashboard.php" class="btn-nav"><i class="fas fa-home"></i> Dashboard Principal</a>
-                <a href="inventario.php" class="btn-nav"><i class="fas fa-boxes"></i> Inventario de Sedes</a>
+                <a href="inventario.php" class="btn-nav"><i class="fas fa-boxes"></i> Volver a Inventario</a>
                 <a href="logout.php" class="btn-nav logout-btn"><i class="fas fa-sign-out-alt"></i> Cerrar Sesión</a>
             </div>
         </div>

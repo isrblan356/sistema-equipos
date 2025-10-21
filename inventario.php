@@ -1,104 +1,598 @@
 <?php
 require_once 'config.php';
 verificarLogin();
-$pdo = conectarDB();
+ $pdo = conectarDB();
 
 // --- CREACIÓN DE TABLAS INICIALES ---
-$pdo->exec("CREATE TABLE IF NOT EXISTS productos ( id INT AUTO_INCREMENT PRIMARY KEY, nombre VARCHAR(255) NOT NULL, codigo VARCHAR(100) NOT NULL UNIQUE, descripcion TEXT, stock_actual INT DEFAULT 0, stock_minimo INT DEFAULT 0, fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP )");
-$pdo->exec("CREATE TABLE IF NOT EXISTS movimientos ( id INT AUTO_INCREMENT PRIMARY KEY, producto_id INT NOT NULL, tipo ENUM('entrada', 'salida') NOT NULL, cantidad INT NOT NULL, tecnico_id INT NULL, fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE CASCADE )");
+ $pdo->exec("CREATE TABLE IF NOT EXISTS productos ( id INT AUTO_INCREMENT PRIMARY KEY, nombre VARCHAR(255) NOT NULL, codigo VARCHAR(100) NOT NULL UNIQUE, part_number VARCHAR(100) NULL, descripcion TEXT, stock_actual INT DEFAULT 0, stock_minimo INT DEFAULT 0, fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP )");
+ $pdo->exec("CREATE TABLE IF NOT EXISTS movimientos ( id INT AUTO_INCREMENT PRIMARY KEY, producto_id INT NOT NULL, tipo VARCHAR(50) NOT NULL, subtipo VARCHAR(50) NULL, cantidad INT NOT NULL, tecnico_id INT NULL, usuario_registro VARCHAR(255) NULL, fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE CASCADE )");
+
+// Agregar columna usuario_registro si no existe
+try {
+    $sedes_temp = $pdo->query("SELECT tabla_movimientos FROM sedes WHERE activa = 1")->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($sedes_temp as $sede_temp) {
+        $tabla_mov = $sede_temp['tabla_movimientos'];
+        $columns = $pdo->query("SHOW COLUMNS FROM `$tabla_mov` LIKE 'usuario_registro'")->fetchAll();
+        if (empty($columns)) {
+            $pdo->exec("ALTER TABLE `$tabla_mov` ADD COLUMN usuario_registro VARCHAR(255) NULL AFTER tecnico_id");
+            error_log("Columna usuario_registro agregada a la tabla $tabla_mov");
+        }
+    }
+} catch (Exception $e) {
+    error_log("Error al agregar columna usuario_registro: " . $e->getMessage());
+}
 
 // --- FUNCIONES ---
 function limpiar($dato) { return htmlspecialchars(trim($dato)); }
-function obtenerEstadisticasSede($pdo, $tabla_productos, $tabla_movimientos) { $hoy = date('Y-m-d'); $stats = []; $stats['total_productos'] = $pdo->query("SELECT COUNT(*) FROM `$tabla_productos`")->fetchColumn(); $stats['stock_bajo'] = $pdo->query("SELECT COUNT(*) FROM `$tabla_productos` WHERE stock_actual <= stock_minimo AND stock_actual > 0")->fetchColumn(); $stats['sin_stock'] = $pdo->query("SELECT COUNT(*) FROM `$tabla_productos` WHERE stock_actual <= 0")->fetchColumn(); $stats['movimientos_hoy'] = $pdo->query("SELECT COUNT(*) FROM `$tabla_movimientos` WHERE DATE(fecha) = '$hoy'")->fetchColumn(); return $stats; }
-function hex2rgb($hex) { $hex = str_replace("#", "", $hex); if(strlen($hex) == 3) { $r = hexdec(substr($hex,0,1).substr($hex,0,1)); $g = hexdec(substr($hex,1,1).substr($hex,1,1)); $b = hexdec(substr($hex,2,1).substr($hex,2,1)); } else { $r = hexdec(substr($hex,0,2)); $g = hexdec(substr($hex,2,2)); $b = hexdec(substr($hex,4,2)); } return "$r, $g, $b"; }
+function obtenerEstadisticasSede($pdo, $tabla_productos, $tabla_movimientos) { 
+    $hoy = date('Y-m-d'); 
+    $stats = []; 
+    $stats['total_productos'] = $pdo->query("SELECT COUNT(*) FROM `$tabla_productos`")->fetchColumn(); 
+    $stats['stock_bajo'] = $pdo->query("SELECT COUNT(*) FROM `$tabla_productos` WHERE stock_actual <= stock_minimo AND stock_actual > 0")->fetchColumn(); 
+    $stats['sin_stock'] = $pdo->query("SELECT COUNT(*) FROM `$tabla_productos` WHERE stock_actual <= stock_minimo")->fetchColumn(); 
+    $stats['movimientos_hoy'] = $pdo->query("SELECT COUNT(*) FROM `$tabla_movimientos` WHERE DATE(fecha) = '$hoy'")->fetchColumn(); 
+    return $stats; 
+}
+function hex2rgb($hex) { 
+    $hex = str_replace("#", "", $hex); 
+    if(strlen($hex) == 3) { 
+        $r = hexdec(substr($hex,0,1).substr($hex,0,1)); 
+        $g = hexdec(substr($hex,1,1).substr($hex,1,1)); 
+        $b = hexdec(substr($hex,2,1).substr($hex,2,1)); 
+    } else { 
+        $r = hexdec(substr($hex,0,2)); 
+        $g = hexdec(substr($hex,2,2)); 
+        $b = hexdec(substr($hex,4,2)); 
+    } 
+    return "$r, $g, $b"; 
+}
 
-// --- OBTENER TÉCNICOS PARA EL SELECT ---
-$tecnicos = [];
-
+// --- OBTENER TÉCNICOS ---
+ $tecnicos = [];
 try {
-    // Obtener solo técnicos con estado 'activo'
-    $tecnicos_query = $pdo->query("SELECT id, nombre FROM tecnicos WHERE estado = 'activo' ORDER BY nombre");
-    if ($tecnicos_query) {
-        $tecnicos = $tecnicos_query->fetchAll(PDO::FETCH_ASSOC);
-    }
+    $tecnicos_query = $pdo->query("SELECT id, nombre FROM tecnicos WHERE estado = 'activo' AND nombre NOT LIKE '%Maria Camila Ossa%' ORDER BY nombre");
+    if ($tecnicos_query) { $tecnicos = $tecnicos_query->fetchAll(PDO::FETCH_ASSOC); }
 } catch (Exception $e) {
     try {
-        // Si hay error con el filtro de estado, intentar sin filtro
-        $tecnicos_query = $pdo->query("SELECT id, nombre FROM tecnicos ORDER BY nombre");
-        if ($tecnicos_query) {
-            $tecnicos = $tecnicos_query->fetchAll(PDO::FETCH_ASSOC);
-        }
+        $tecnicos_query = $pdo->query("SELECT id, nombre FROM tecnicos WHERE nombre NOT LIKE '%Maria Camila Ossa%' ORDER BY nombre");
+        if ($tecnicos_query) { $tecnicos = $tecnicos_query->fetchAll(PDO::FETCH_ASSOC); }
     } catch (Exception $e2) {
-        // Si todo falla, usar técnicos de ejemplo
-        $tecnicos = [
-            ['id' => 1, 'nombre' => 'Técnico de Ejemplo 1'],
-            ['id' => 2, 'nombre' => 'Técnico de Ejemplo 2']
-        ];
+        $tecnicos = [['id' => 1, 'nombre' => 'Técnico de Ejemplo 1'], ['id' => 2, 'nombre' => 'Técnico de Ejemplo 2']];
     }
 }
 
 // --- CONFIGURACIÓN DINÁMICA DE SEDES ---
-$sedes_query = $pdo->query("SELECT * FROM sedes WHERE activa = 1 ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
-$sedes_config = [];
+ $sedes_query = $pdo->query("SELECT * FROM sedes WHERE activa = 1 ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
+ $sedes_config = [];
 foreach ($sedes_query as $sede) { $sedes_config[$sede['id']] = $sede; }
 
 // --- VISTA ACTUAL ---
-$vista_actual = isset($_GET['sede_id']) ? $_GET['sede_id'] : 'vista_inventario_dashboard';
+ $vista_actual = isset($_GET['sede_id']) ? $_GET['sede_id'] : 'vista_inventario_dashboard';
 
-// --- PROCESAR FORMULARIOS ---
+// --- PROCESAR CONFIRMACIÓN DE MOVIMIENTO ---
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['confirmar_movimiento']) && $_POST['confirmar_movimiento'] == '1') {
+    $config = $sedes_config[$vista_actual];
+    $tabla_productos = $config['tabla_productos'];
+    $tabla_movimientos = $config['tabla_movimientos'];
+    
+    $producto_id = intval($_POST['producto_id']);
+    $tipo = limpiar($_POST['tipo']);
+    $tecnico_id = !empty($_POST['tecnico_id']) ? intval($_POST['tecnico_id']) : NULL;
+    $cantidad = abs(intval($_POST['cantidad']));
+    
+    // Obtener el usuario logueado
+    $usuario_registro = isset($_SESSION['usuario_nombre']) ? $_SESSION['usuario_nombre'] : 
+                       (isset($_SESSION['nombre']) ? $_SESSION['nombre'] : 
+                       (isset($_SESSION['email']) ? $_SESSION['email'] : 'Usuario desconocido'));
+    
+    error_log("DEBUG - Valores a insertar: Producto ID: $producto_id | Tipo: $tipo | Cantidad: $cantidad | Técnico ID: " . ($tecnico_id ?? 'NULL'));
+    
+    $pdo->beginTransaction();
+    try {
+        $stmt = $pdo->prepare("INSERT INTO `$tabla_movimientos` (producto_id, tipo, cantidad, tecnico_id, usuario_registro, fecha) VALUES (?, ?, ?, ?, ?, NOW())"); 
+        $result = $stmt->execute([$producto_id, $tipo, $cantidad, $tecnico_id, $usuario_registro]);
+        
+        if (!$result) {
+            error_log("ERROR: Fallo al insertar movimiento");
+        }
+        
+        $inserted_id = $pdo->lastInsertId();
+        error_log("Movimiento insertado con ID: " . $inserted_id);
+        
+        $tipos_entrada = ['Desinstalaciones', 'Sobrantes'];
+        $tipos_salida = ['Preinstalaciones'];
+        $tipos_sin_afectar_stock = ['Instalaciones OK'];
+        
+        $update_sql = null;
+        if (in_array($tipo, $tipos_entrada)) {
+            $update_sql = "UPDATE `$tabla_productos` SET stock_actual = stock_actual + ? WHERE id = ?";
+            error_log("Aplicando entrada de stock: +" . $cantidad);
+        } elseif (in_array($tipo, $tipos_salida)) {
+            $update_sql = "UPDATE `$tabla_productos` SET stock_actual = stock_actual - ? WHERE id = ?";
+            error_log("Aplicando salida de stock: -" . $cantidad);
+        } elseif (in_array($tipo, $tipos_sin_afectar_stock)) {
+            error_log("Tipo 'Instalaciones OK': Movimiento registrado sin afectar stock");
+        }
+        
+        if ($update_sql) {
+            $stmt_update = $pdo->prepare($update_sql); 
+            $update_result = $stmt_update->execute([$cantidad, $producto_id]);
+            if (!$update_result) {
+                error_log("ERROR: Fallo al actualizar stock");
+            }
+        }
+        
+        $pdo->commit();
+        error_log("Transacción completada exitosamente");
+        
+        $_SESSION['mensaje_exito'] = [
+            'titulo' => '✅ Movimiento Registrado',
+            'mensaje' => 'El movimiento se ha registrado correctamente en el sistema.'
+        ];
+        
+    } catch (Exception $e) {
+        $pdo->rollBack();
+        error_log("Error al registrar movimiento: " . $e->getMessage());
+        
+        $_SESSION['error_validacion'] = [
+            'titulo' => '❌ Error al Registrar',
+            'mensaje' => 'Ocurrió un error al procesar el movimiento.',
+            'detalles' => ['Error técnico: ' . $e->getMessage()]
+        ];
+    }
+    
+    header("Location: inventario.php?sede_id=" . $vista_actual); 
+    exit();
+}
+
+// --- PROCESAR VALIDACIONES DE FORMULARIOS ---
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['accion']) && $vista_actual != 'vista_inventario_dashboard') {
     $config = $sedes_config[$vista_actual];
     $tabla_productos = $config['tabla_productos'];
     $tabla_movimientos = $config['tabla_movimientos'];
-    if ($_POST['accion'] == 'agregar') { $stmt = $pdo->prepare("INSERT INTO `$tabla_productos` (nombre, codigo, descripcion, stock_actual, stock_minimo) VALUES (?, ?, ?, ?, ?)"); $stmt->execute([limpiar($_POST['nombre']), limpiar($_POST['codigo']), limpiar($_POST['descripcion']), intval($_POST['stock_actual']), intval($_POST['stock_minimo'])]); }
-    elseif ($_POST['accion'] == 'editar') { $stmt = $pdo->prepare("UPDATE `$tabla_productos` SET nombre=?, codigo=?, descripcion=?, stock_minimo=? WHERE id=?"); $stmt->execute([limpiar($_POST['nombre']), limpiar($_POST['codigo']), limpiar($_POST['descripcion']), intval($_POST['stock_minimo']), intval($_POST['id'])]); }
-    elseif ($_POST['accion'] == 'eliminar') { $stmt = $pdo->prepare("DELETE FROM `$tabla_productos` WHERE id=?"); $stmt->execute([intval($_POST['id'])]); }
-    elseif ($_POST['accion'] == 'movimiento') { 
-        $producto_id = intval($_POST['producto_id']); 
-        $tipo = $_POST['tipo']; 
-        $cantidad = intval($_POST['cantidad']); 
-        $tecnico_id = !empty($_POST['tecnico_id']) ? intval($_POST['tecnico_id']) : NULL;
-        
-        $stmt = $pdo->prepare("INSERT INTO `$tabla_movimientos` (producto_id, tipo, cantidad, tecnico_id) VALUES (?, ?, ?, ?)"); 
-        $stmt->execute([$producto_id, $tipo, $cantidad, $tecnico_id]); 
-        
-        $update = $tipo === 'entrada' ? "UPDATE `$tabla_productos` SET stock_actual = stock_actual + ? WHERE id = ?" : "UPDATE `$tabla_productos` SET stock_actual = stock_actual - ? WHERE id = ?"; 
-        $stmt = $pdo->prepare($update); 
-        $stmt->execute([$cantidad, $producto_id]); 
+    
+    if ($_POST['accion'] == 'editar') { 
+        $stmt = $pdo->prepare("UPDATE `$tabla_productos` SET nombre=?, codigo=?, part_number=?, stock_minimo=? WHERE id=?"); 
+        $stmt->execute([limpiar($_POST['nombre']), limpiar($_POST['codigo']), limpiar($_POST['part_number']), intval($_POST['stock_minimo']), intval($_POST['id'])]); 
+        header("Location: inventario.php?sede_id=" . $vista_actual); exit();
     }
-    header("Location: inventario.php?sede_id=" . $vista_actual); exit();
+    elseif ($_POST['accion'] == 'eliminar') { 
+        $stmt = $pdo->prepare("DELETE FROM `$tabla_productos` WHERE id=?"); 
+        $stmt->execute([intval($_POST['id'])]); 
+        header("Location: inventario.php?sede_id=" . $vista_actual); exit();
+    }
+    elseif ($_POST['accion'] == 'validar_movimiento') {
+        if (!empty($_POST['producto_id']) && !empty($_POST['tipo']) && !empty($_POST['cantidad'])) {
+            $producto_id = intval($_POST['producto_id']);
+            $tipo = limpiar($_POST['tipo']);
+            $tecnico_id = !empty($_POST['tecnico_id']) ? intval($_POST['tecnico_id']) : NULL;
+            $cantidad = abs(intval($_POST['cantidad']));
+            
+            // Obtener información del producto
+            $stmt_producto = $pdo->prepare("SELECT nombre, stock_actual FROM `$tabla_productos` WHERE id = ?");
+            $stmt_producto->execute([$producto_id]);
+            $producto_info = $stmt_producto->fetch(PDO::FETCH_ASSOC);
+            
+            if (!$producto_info) {
+                $_SESSION['error_validacion'] = [
+                    'titulo' => '❌ Error',
+                    'mensaje' => 'El producto seleccionado no existe.',
+                    'detalles' => ['Por favor, selecciona un producto válido de la lista.']
+                ];
+                header("Location: inventario.php?sede_id=" . $vista_actual); 
+                exit();
+            }
+            
+            $nombre_producto = $producto_info['nombre'];
+            $stock_disponible = $producto_info['stock_actual'];
+            
+            // VALIDACIÓN PARA PREINSTALACIONES - VERIFICAR STOCK DISPONIBLE
+            if ($tipo == 'Preinstalaciones') {
+                if ($cantidad > $stock_disponible) {
+                    $diferencia = $cantidad - $stock_disponible;
+                    
+                    $_SESSION['error_validacion'] = [
+                        'titulo' => '❌ Stock Insuficiente',
+                        'mensaje' => "No hay suficiente stock en bodega para realizar esta Preinstalación.",
+                        'detalles' => [
+                            "Producto: <strong>{$nombre_producto}</strong>",
+                            "Stock actual en bodega: <strong style='color: #27ae60;'>{$stock_disponible} unidades</strong>",
+                            "Cantidad que intentas entregar: <strong style='color: #e74c3c;'>{$cantidad} unidades</strong>",
+                            "Exceso detectado: <strong style='color: #e74c3c;'>+{$diferencia} unidades</strong>",
+                            "💡 Solo puedes entregar hasta <strong>{$stock_disponible} unidades</strong> de este producto"
+                        ]
+                    ];
+                    
+                    error_log("VALIDACIÓN FALLIDA - Preinstalación excede stock disponible");
+                    header("Location: inventario.php?sede_id=" . $vista_actual); 
+                    exit();
+                }
+            }
+            
+            // VALIDACIÓN PARA SOBRANTES
+            if ($tipo == 'Sobrantes') {
+                if ($tecnico_id === NULL) {
+                    $_SESSION['error_validacion'] = [
+                        'titulo' => '⚠️ Técnico Requerido',
+                        'mensaje' => "Para registrar Sobrantes es obligatorio seleccionar el técnico que devuelve el material.",
+                        'detalles' => [
+                            "El campo <strong>Técnico Responsable</strong> es obligatorio para el tipo <strong>Sobrantes</strong>",
+                            "Esto permite validar que las devoluciones coincidan con las entregas previas"
+                        ]
+                    ];
+                    
+                    error_log("VALIDACIÓN FALLIDA - Sobrantes sin técnico asignado");
+                    header("Location: inventario.php?sede_id=" . $vista_actual); 
+                    exit();
+                }
+                
+                // Obtener totales de movimientos del técnico para este producto (solo ayer y hoy)
+                $stmt_preinstalaciones = $pdo->prepare("
+                    SELECT COALESCE(SUM(cantidad), 0) as total_entregado 
+                    FROM `$tabla_movimientos` 
+                    WHERE producto_id = ? AND tecnico_id = ? AND tipo = 'Preinstalaciones'
+                    AND DATE(fecha) >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND DATE(fecha) <= CURDATE()
+                ");
+                $stmt_preinstalaciones->execute([$producto_id, $tecnico_id]);
+                $total_entregado = $stmt_preinstalaciones->fetchColumn();
+                
+                $stmt_instalaciones = $pdo->prepare("
+                    SELECT COALESCE(SUM(cantidad), 0) as total_instalado 
+                    FROM `$tabla_movimientos` 
+                    WHERE producto_id = ? AND tecnico_id = ? AND tipo = 'Instalaciones OK'
+                    AND DATE(fecha) >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND DATE(fecha) <= CURDATE()
+                ");
+                $stmt_instalaciones->execute([$producto_id, $tecnico_id]);
+                $total_instalado = $stmt_instalaciones->fetchColumn();
+                
+                $stmt_sobrantes = $pdo->prepare("
+                    SELECT COALESCE(SUM(cantidad), 0) as total_devuelto 
+                    FROM `$tabla_movimientos` 
+                    WHERE producto_id = ? AND tecnico_id = ? AND tipo = 'Sobrantes'
+                    AND DATE(fecha) >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND DATE(fecha) <= CURDATE()
+                ");
+                $stmt_sobrantes->execute([$producto_id, $tecnico_id]);
+                $total_devuelto = $stmt_sobrantes->fetchColumn();
+                
+                // Calcular el total que se reportaría con este nuevo movimiento
+                $total_reportado_con_nuevo = $total_instalado + $total_devuelto + $cantidad;
+                
+                // VALIDACIÓN 1: Verificar que NO se esté devolviendo MÁS de lo entregado
+                if ($total_reportado_con_nuevo > $total_entregado) {
+                    $exceso = $total_reportado_con_nuevo - $total_entregado;
+                    $disponible_devolver = $total_entregado - ($total_instalado + $total_devuelto);
+                    
+                    $_SESSION['error_validacion'] = [
+                        'titulo' => '❌ Error: Exceso en Sobrantes',
+                        'mensaje' => "Estás intentando devolver MÁS equipos de los que se entregaron al técnico.",
+                        'detalles' => [
+                            "<strong style='color: #e74c3c;'>⚠️ PROBLEMA DETECTADO:</strong> El total reportado supera lo entregado",
+                            "",
+                            "<strong>📦 ENTREGAS (Preinstalaciones):</strong>",
+                            "• Total entregado al técnico: <strong style='color: #3498db;'>{$total_entregado} unidades</strong>",
+                            "",
+                            "<strong>📊 REPORTES DEL TÉCNICO:</strong>",
+                            "• Instalaciones OK (ya reportadas): <strong>{$total_instalado} unidades</strong>",
+                            "• Sobrantes (ya devueltos): <strong>{$total_devuelto} unidades</strong>",
+                            "• Sobrantes (intentando devolver ahora): <strong style='color: #e74c3c;'>{$cantidad} unidades</strong>",
+                            "",
+                            "<strong>🔢 CÁLCULO:</strong>",
+                            "• Total reportado = {$total_instalado} (Instalaciones) + {$total_devuelto} (Sobrantes previos) + {$cantidad} (Sobrantes ahora) = <strong style='color: #e74c3c;'>{$total_reportado_con_nuevo} unidades</strong>",
+                            "• Total entregado = <strong style='color: #3498db;'>{$total_entregado} unidades</strong>",
+                            "",
+                            "<strong style='color: #e74c3c;'>❌ EXCESO DETECTADO: +{$exceso} unidades</strong>",
+                            "",
+                            "💡 <strong>SOLUCIÓN:</strong> Solo puedes devolver hasta <strong style='color: #27ae60;'>{$disponible_devolver} unidades</strong> en este momento"
+                        ]
+                    ];
+                    
+                    error_log("VALIDACIÓN FALLIDA - Sobrantes EXCEDEN lo entregado | Producto: {$nombre_producto} | Técnico ID: {$tecnico_id}");
+                    error_log("  Entregado: {$total_entregado} | Instalado: {$total_instalado} | Devuelto: {$total_devuelto} | Intentando devolver: {$cantidad} | Total: {$total_reportado_con_nuevo}");
+                    header("Location: inventario.php?sede_id=" . $vista_actual); 
+                    exit();
+                }
+                
+                // VALIDACIÓN 2: Verificar que NO falten equipos (que el total reportado sea igual a lo entregado)
+                // Esta validación solo se aplica si ya hay instalaciones reportadas
+                if ($total_instalado > 0) {
+                    $equipos_restantes = $total_entregado - $total_reportado_con_nuevo;
+                    
+                    if ($equipos_restantes > 0) {
+                        $_SESSION['error_validacion'] = [
+                            'titulo' => '⚠️ Advertencia: Faltan Equipos por Reportar',
+                            'mensaje' => "El técnico no ha reportado todos los equipos que se le entregaron. Faltan equipos por contabilizar.",
+                            'detalles' => [
+                                "<strong style='color: #f39c12;'>⚠️ INCONSISTENCIA DETECTADA:</strong> El total reportado es MENOR a lo entregado",
+                                "",
+                                "<strong>📦 ENTREGAS (Preinstalaciones):</strong>",
+                                "• Total entregado al técnico: <strong style='color: #3498db;'>{$total_entregado} unidades</strong>",
+                                "",
+                                "<strong>📊 REPORTES DEL TÉCNICO:</strong>",
+                                "• Instalaciones OK (ya reportadas): <strong>{$total_instalado} unidades</strong>",
+                                "• Sobrantes (ya devueltos): <strong>{$total_devuelto} unidades</strong>",
+                                "• Sobrantes (intentando devolver ahora): <strong>{$cantidad} unidades</strong>",
+                                "",
+                                "<strong>🔢 CÁLCULO:</strong>",
+                                "• Total reportado = {$total_instalado} (Instalaciones) + {$total_devuelto} (Sobrantes previos) + {$cantidad} (Sobrantes ahora) = <strong>{$total_reportado_con_nuevo} unidades</strong>",
+                                "• Total entregado = <strong style='color: #3498db;'>{$total_entregado} unidades</strong>",
+                                "",
+                                "<strong style='color: #e74c3c;'>❌ FALTAN: {$equipos_restantes} unidades por reportar</strong>",
+                                "",
+                                "💡 <strong>POSIBLES CAUSAS:</strong>",
+                                "• El técnico aún tiene equipos en su poder",
+                                "• Falta registrar más instalaciones o sobrantes",
+                                "• Puede haber equipos perdidos o dañados",
+                                "",
+                                "🔍 <strong>ACCIÓN REQUERIDA:</strong> Verificar con el técnico el estado de los {$equipos_restantes} equipos faltantes antes de continuar"
+                            ]
+                        ];
+                        
+                        error_log("VALIDACIÓN FALLIDA - FALTAN equipos por reportar | Producto: {$nombre_producto} | Técnico ID: {$tecnico_id}");
+                        error_log("  Entregado: {$total_entregado} | Instalado: {$total_instalado} | Devuelto: {$total_devuelto} | Intentando devolver: {$cantidad} | Total reportado: {$total_reportado_con_nuevo} | Faltan: {$equipos_restantes}");
+                        header("Location: inventario.php?sede_id=" . $vista_actual); 
+                        exit();
+                    }
+                }
+                
+                error_log("VALIDACIÓN EXITOSA - Sobrantes: Producto: {$nombre_producto} | Técnico ID: {$tecnico_id} | Cantidad: {$cantidad}");
+                error_log("  Entregado: {$total_entregado} | Instalado: {$total_instalado} | Devuelto previo: {$total_devuelto} | Total después: {$total_reportado_con_nuevo}");
+            }
+            
+            // VALIDACIÓN PARA INSTALACIONES OK - VERIFICAR QUE NO EXCEDA LAS PREINSTALACIONES
+            if ($tipo == 'Instalaciones OK') {
+                if ($tecnico_id === NULL) {
+                    $_SESSION['error_validacion'] = [
+                        'titulo' => '⚠️ Técnico Requerido',
+                        'mensaje' => "Para registrar Instalaciones OK es obligatorio seleccionar el técnico que realizó la instalación.",
+                        'detalles' => [
+                            "El campo <strong>Técnico Responsable</strong> es obligatorio para el tipo <strong>Instalaciones OK</strong>",
+                            "Esto permite validar que las instalaciones coincidan con las entregas previas"
+                        ]
+                    ];
+                    
+                    error_log("VALIDACIÓN FALLIDA - Instalaciones OK sin técnico asignado");
+                    header("Location: inventario.php?sede_id=" . $vista_actual); 
+                    exit();
+                }
+                
+                // Obtener totales de preinstalaciones e instalaciones ok del técnico para este producto (solo ayer y hoy)
+                $stmt_preinstalaciones = $pdo->prepare("
+                    SELECT COALESCE(SUM(cantidad), 0) as total_entregado 
+                    FROM `$tabla_movimientos` 
+                    WHERE producto_id = ? AND tecnico_id = ? AND tipo = 'Preinstalaciones'
+                    AND DATE(fecha) >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND DATE(fecha) <= CURDATE()
+                ");
+                $stmt_preinstalaciones->execute([$producto_id, $tecnico_id]);
+                $total_entregado = $stmt_preinstalaciones->fetchColumn();
+                
+                $stmt_instalaciones = $pdo->prepare("
+                    SELECT COALESCE(SUM(cantidad), 0) as total_instalado 
+                    FROM `$tabla_movimientos` 
+                    WHERE producto_id = ? AND tecnico_id = ? AND tipo = 'Instalaciones OK'
+                    AND DATE(fecha) >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND DATE(fecha) <= CURDATE()
+                ");
+                $stmt_instalaciones->execute([$producto_id, $tecnico_id]);
+                $total_instalado = $stmt_instalaciones->fetchColumn();
+                
+                // Calcular el total que se reportaría con este nuevo movimiento
+                $total_reportado_con_nuevo = $total_instalado + $cantidad;
+                
+                // Verificar que no se instalen más de lo entregado
+                if ($total_reportado_con_nuevo > $total_entregado) {
+                    $exceso = $total_reportado_con_nuevo - $total_entregado;
+                    $disponible_instalar = $total_entregado - $total_instalado;
+                    
+                    $_SESSION['error_validacion'] = [
+                        'titulo' => '❌ Error: Exceso en Instalaciones OK',
+                        'mensaje' => "Estás intentando instalar MÁS equipos de los que se entregaron al técnico.",
+                        'detalles' => [
+                            "<strong style='color: #e74c3c;'>⚠️ PROBLEMA DETECTADO:</strong> El total instalado supera lo entregado",
+                            "",
+                            "<strong>📦 ENTREGAS (Preinstalaciones):</strong>",
+                            "• Total entregado al técnico: <strong style='color: #3498db;'>{$total_entregado} unidades</strong>",
+                            "",
+                            "<strong>📊 REPORTES DEL TÉCNICO:</strong>",
+                            "• Instalaciones OK (ya reportadas): <strong>{$total_instalado} unidades</strong>",
+                            "• Instalaciones OK (intentando reportar ahora): <strong style='color: #e74c3c;'>{$cantidad} unidades</strong>",
+                            "",
+                            "<strong>🔢 CÁLCULO:</strong>",
+                            "• Total reportado = {$total_instalado} (previas) + {$cantidad} (nuevas) = <strong style='color: #e74c3c;'>{$total_reportado_con_nuevo} unidades</strong>",
+                            "• Total entregado = <strong style='color: #3498db;'>{$total_entregado} unidades</strong>",
+                            "",
+                            "<strong style='color: #e74c3c;'>❌ EXCESO DETECTADO: +{$exceso} unidades</strong>",
+                            "",
+                            "💡 <strong>SOLUCIÓN:</strong> Solo puedes instalar hasta <strong style='color: #27ae60;'>{$disponible_instalar} unidades</strong> en este momento"
+                        ]
+                    ];
+                    
+                    error_log("VALIDACIÓN FALLIDA - Instalaciones OK EXCEDEN lo entregado | Producto: {$nombre_producto} | Técnico ID: {$tecnico_id}");
+                    error_log("  Entregado: {$total_entregado} | Instalado previo: {$total_instalado} | Intentando instalar: {$cantidad} | Total: {$total_reportado_con_nuevo}");
+                    header("Location: inventario.php?sede_id=" . $vista_actual); 
+                    exit();
+                }
+                
+                // Verificar que se estén instalando todos los equipos (solo si hay equipos pendientes)
+                if ($total_entregado > $total_reportado_con_nuevo) {
+                    $faltan_instalar = $total_entregado - $total_reportado_con_nuevo;
+                    
+                    $_SESSION['advertencia_instalacion'] = [
+                        'titulo' => '⚠️ Advertencia: Faltan Equipos por Instalar',
+                        'mensaje' => "El técnico no ha reportado todas las instalaciones de los equipos que se le entregaron.",
+                        'detalles' => [
+                            "<strong style='color: #f39c12;'>⚠️ INCONSISTENCIA DETECTADA:</strong> El total instalado es MENOR a lo entregado",
+                            "",
+                            "<strong>📦 ENTREGAS (Preinstalaciones):</strong>",
+                            "• Total entregado al técnico: <strong style='color: #3498db;'>{$total_entregado} unidades</strong>",
+                            "",
+                            "<strong>📊 REPORTES DEL TÉCNICO:</strong>",
+                            "• Instalaciones OK (ya reportadas): <strong>{$total_instalado} unidades</strong>",
+                            "• Instalaciones OK (intentando reportar ahora): <strong>{$cantidad} unidades</strong>",
+                            "",
+                            "<strong>🔢 CÁLCULO:</strong>",
+                            "• Total reportado = {$total_instalado} (previas) + {$cantidad} (nuevas) = <strong>{$total_reportado_con_nuevo} unidades</strong>",
+                            "• Total entregado = <strong style='color: #3498db;'>{$total_entregado} unidades</strong>",
+                            "",
+                            "<strong style='color: #e74c3c;'>❌ FALTAN: {$faltan_instalar} unidades por instalar</strong>",
+                            "",
+                            "💡 <strong>POSIBLES CAUSAS:</strong>",
+                            "• El técnico aún tiene equipos sin instalar",
+                            "• Falta registrar más instalaciones",
+                            "• Puede haber equipos perdidos o dañados",
+                            "",
+                            "🔍 <strong>ACCIÓN REQUERIDA:</strong> Verificar con el técnico el estado de los {$faltan_instalar} equipos faltantes antes de continuar"
+                        ],
+                        'datos' => [
+                            'producto_id' => $producto_id,
+                            'tipo' => $tipo,
+                            'tecnico_id' => $tecnico_id,
+                            'cantidad' => $cantidad
+                        ]
+                    ];
+                    
+                    error_log("VALIDACIÓN CON ADVERTENCIA - FALTAN equipos por instalar | Producto: {$nombre_producto} | Técnico ID: {$tecnico_id}");
+                    error_log("  Entregado: {$total_entregado} | Instalado previo: {$total_instalado} | Intentando instalar: {$cantidad} | Total reportado: {$total_reportado_con_nuevo} | Faltan: {$faltan_instalar}");
+                } else {
+                    error_log("VALIDACIÓN EXITOSA - Instalaciones OK: Producto: {$nombre_producto} | Técnico ID: {$tecnico_id} | Cantidad: {$cantidad}");
+                    error_log("  Entregado: {$total_entregado} | Instalado previo: {$total_instalado} | Total después: {$total_reportado_con_nuevo}");
+                }
+            }
+            
+            // Si todas las validaciones pasan, mostrar confirmación
+            $tecnico_nombre = 'Sin asignar';
+            if ($tecnico_id) {
+                $stmt_tecnico = $pdo->prepare("SELECT nombre FROM tecnicos WHERE id = ?");
+                $stmt_tecnico->execute([$tecnico_id]);
+                $tecnico_result = $stmt_tecnico->fetch(PDO::FETCH_ASSOC);
+                if ($tecnico_result) {
+                    $tecnico_nombre = $tecnico_result['nombre'];
+                }
+            }
+            
+            $nuevo_stock = $stock_disponible;
+            if ($tipo == 'Preinstalaciones') {
+                $nuevo_stock = $stock_disponible - $cantidad;
+            } elseif (in_array($tipo, ['Desinstalaciones', 'Sobrantes'])) {
+                $nuevo_stock = $stock_disponible + $cantidad;
+            }
+            
+            $_SESSION['confirmacion_movimiento'] = [
+                'titulo' => '⚠️ Confirmar Movimiento',
+                'mensaje' => '¿Estás seguro de registrar este movimiento?',
+                'detalles' => [
+                    "Producto: <strong>{$nombre_producto}</strong>",
+                    "Tipo de movimiento: <strong>{$tipo}</strong>",
+                    "Cantidad: <strong>{$cantidad} unidades</strong>",
+                    "Técnico: <strong>{$tecnico_nombre}</strong>",
+                    "Stock actual: <strong>{$stock_disponible} unidades</strong>",
+                    "Stock después del movimiento: <strong style='color: " . ($nuevo_stock < $stock_disponible ? '#e74c3c' : ($nuevo_stock > $stock_disponible ? '#27ae60' : '#3498db')) . ";'>{$nuevo_stock} unidades</strong>"
+                ],
+                'datos' => [
+                    'producto_id' => $producto_id,
+                    'tipo' => $tipo,
+                    'tecnico_id' => $tecnico_id,
+                    'cantidad' => $cantidad
+                ]
+            ];
+            
+            if ($tipo == 'Sobrantes') {
+                $_SESSION['confirmacion_movimiento']['detalles'][] = "⚠️ <strong>NOTA:</strong> Se validó que esta devolución no supera las entregas previas al técnico";
+            } elseif ($tipo == 'Instalaciones OK') {
+                $_SESSION['confirmacion_movimiento']['detalles'][] = "⚠️ <strong>NOTA:</strong> Se validó que las instalaciones coinciden con las preinstalaciones realizadas";
+            }
+        }
+    }
 }
 
 // --- OBTENER DATOS PARA LA VISTA ---
 if ($vista_actual == 'vista_inventario_dashboard') {
-    $stats_por_sede = []; foreach($sedes_config as $id => $sede) { $stats_por_sede[$id] = obtenerEstadisticasSede($pdo, $sede['tabla_productos'], $sede['tabla_movimientos']); }
-    $totales = [ 'total_productos' => array_sum(array_column($stats_por_sede, 'total_productos')), 'stock_bajo'      => array_sum(array_column($stats_por_sede, 'stock_bajo')), 'sin_stock'       => array_sum(array_column($stats_por_sede, 'sin_stock')), 'movimientos_hoy' => array_sum(array_column($stats_por_sede, 'movimientos_hoy')) ];
+    $stats_por_sede = []; 
+    foreach($sedes_config as $id => $sede) { 
+        $stats_por_sede[$id] = obtenerEstadisticasSede($pdo, $sede['tabla_productos'], $sede['tabla_movimientos']); 
+    }
+    $totales = [ 
+        'total_productos' => array_sum(array_column($stats_por_sede, 'total_productos')), 
+        'stock_bajo'      => array_sum(array_column($stats_por_sede, 'stock_bajo')), 
+        'sin_stock'       => array_sum(array_column($stats_por_sede, 'sin_stock')), 
+        'movimientos_hoy' => array_sum(array_column($stats_por_sede, 'movimientos_hoy')) 
+    ];
     $ultimos_movimientos = []; 
     foreach($sedes_config as $id => $sede) { 
-        $movs_query = $pdo->query("SELECT m.*, p.nombre as producto_nombre, t.nombre as tecnico_nombre, '{$sede['nombre']}' as sede_nombre FROM `{$sede['tabla_movimientos']}` m JOIN `{$sede['tabla_productos']}` p ON m.producto_id = p.id LEFT JOIN tecnicos t ON m.tecnico_id = t.id ORDER BY m.fecha DESC LIMIT 5"); 
+        $movs_query = $pdo->query("SELECT m.*, p.nombre as producto_nombre, t.nombre as tecnico_nombre, m.usuario_registro, '{$sede['nombre']}' as sede_nombre FROM `{$sede['tabla_movimientos']}` m JOIN `{$sede['tabla_productos']}` p ON m.producto_id = p.id LEFT JOIN tecnicos t ON m.tecnico_id = t.id ORDER BY m.fecha DESC LIMIT 5"); 
         if($movs_query) { 
             $ultimos_movimientos = array_merge($ultimos_movimientos, $movs_query->fetchAll(PDO::FETCH_ASSOC)); 
         } 
     }
-    usort($ultimos_movimientos, fn($a, $b) => strtotime($b['fecha']) - strtotime($a['fecha'])); $ultimos_movimientos = array_slice($ultimos_movimientos, 0, 10);
+    usort($ultimos_movimientos, fn($a, $b) => strtotime($b['fecha']) - strtotime($a['fecha'])); 
+    $ultimos_movimientos = array_slice($ultimos_movimientos, 0, 10);
 } else {
-    if (!isset($sedes_config[$vista_actual])) { header("Location: inventario.php"); exit(); }
-    $config = $sedes_config[$vista_actual]; $tabla_productos = $config['tabla_productos']; $tabla_movimientos = $config['tabla_movimientos'];
-    $productos = $pdo->query("SELECT * FROM `$tabla_productos` ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC);
-    $movimientos = $pdo->query("SELECT m.*, p.nombre, t.nombre as tecnico_nombre FROM `$tabla_movimientos` m JOIN `$tabla_productos` p ON m.producto_id = p.id LEFT JOIN tecnicos t ON m.tecnico_id = t.id ORDER BY m.fecha DESC LIMIT 10")->fetchAll(PDO::FETCH_ASSOC);
+    if (!isset($sedes_config[$vista_actual])) { 
+        header("Location: inventario.php"); 
+        exit(); 
+    }
+    $config = $sedes_config[$vista_actual]; 
+    $tabla_productos = $config['tabla_productos']; 
+    $tabla_movimientos = $config['tabla_movimientos'];
+    
+    try {
+        $check_table = $pdo->query("SHOW COLUMNS FROM tipo_tecnologia")->fetchAll(PDO::FETCH_ASSOC);
+        $id_column = 'id';
+        
+        foreach ($check_table as $column) {
+            if (stripos($column['Field'], 'id') !== false && $column['Key'] == 'PRI') {
+                $id_column = $column['Field'];
+                break;
+            }
+        }
+        
+        $query = "SELECT p.*, tt.nombre as tipo_tecnologia_nombre 
+                  FROM `$tabla_productos` p 
+                  LEFT JOIN tipo_tecnologia tt ON p.tipo_tecnologia_id = tt.$id_column 
+                  ORDER BY p.id DESC";
+        
+        $productos = $pdo->query($query)->fetchAll(PDO::FETCH_ASSOC);
+        
+    } catch (Exception $e) {
+        error_log("Error al obtener productos: " . $e->getMessage());
+        
+        $productos = $pdo->query("SELECT * FROM `$tabla_productos` ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC);
+        
+        foreach ($productos as &$producto) {
+            if (isset($producto['tipo_tecnologia_id']) && !empty($producto['tipo_tecnologia_id'])) {
+                try {
+                    $stmt = $pdo->prepare("SELECT nombre FROM tipo_tecnologia WHERE id = ?");
+                    $stmt->execute([$producto['tipo_tecnologia_id']]);
+                    $tipo = $stmt->fetch(PDO::FETCH_ASSOC);
+                    $producto['tipo_tecnologia_nombre'] = $tipo ? $tipo['nombre'] : 'Sin asignar';
+                } catch (Exception $e2) {
+                    $producto['tipo_tecnologia_nombre'] = 'Sin asignar';
+                }
+            } else {
+                $producto['tipo_tecnologia_nombre'] = 'Sin asignar';
+            }
+        }
+    }
+    
+    $movimientos = $pdo->query("SELECT m.*, p.nombre, t.nombre as tecnico_nombre, m.usuario_registro FROM `$tabla_movimientos` m JOIN `$tabla_productos` p ON m.producto_id = p.id LEFT JOIN tecnicos t ON m.tecnico_id = t.id ORDER BY m.fecha DESC")->fetchAll(PDO::FETCH_ASSOC);
     $stats_sede = obtenerEstadisticasSede($pdo, $tabla_productos, $tabla_movimientos);
-    $total_productos = $stats_sede['total_productos']; $movimientos_hoy = $stats_sede['movimientos_hoy']; $stock_bajo = $stats_sede['stock_bajo']; $sin_stock = $stats_sede['sin_stock'];
+    $total_productos = $stats_sede['total_productos']; 
+    $movimientos_hoy = $stats_sede['movimientos_hoy']; 
+    $stock_bajo = $stats_sede['stock_bajo']; 
+    $sin_stock = $stats_sede['sin_stock'];
 }
 
-$color_actual_hex = '#667eea'; $color_actual_rgb = '102, 126, 234';
-if ($vista_actual != 'vista_inventario_dashboard' && isset($sedes_config[$vista_actual])) { $color_actual_hex = $sedes_config[$vista_actual]['color']; $color_actual_rgb = hex2rgb($color_actual_hex); }
+ $color_actual_hex = '#667eea'; 
+ $color_actual_rgb = '102, 126, 234';
+if ($vista_actual != 'vista_inventario_dashboard' && isset($sedes_config[$vista_actual])) { 
+    $color_actual_hex = $sedes_config[$vista_actual]['color']; 
+    $color_actual_rgb = hex2rgb($color_actual_hex); 
+}
 ?>
 <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?= $vista_actual == 'vista_inventario_dashboard' ? 'Dashboard de Inventario' : 'Inventario ' . $sedes_config[$vista_actual]['nombre'] ?></title>
+    <title><?= $vista_actual == 'vista_inventario_dashboard' ? 'Dashboard de Inventario' : 'Inventario ' . ($sedes_config[$vista_actual]['nombre'] ?? '') ?></title>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -116,30 +610,25 @@ if ($vista_actual != 'vista_inventario_dashboard' && isset($sedes_config[$vista_
         .user-info i { color: <?= $color_actual_hex ?>; }
         .logout-btn { background: linear-gradient(45deg, #e74c3c, #c0392b); color: white; border: none;}
         .container { max-width: 1400px; margin: 2rem auto; padding: 0 2rem; }
-        .welcome-section { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(20px); border-radius: 20px; padding: 2rem; margin-bottom: 2rem; box-shadow: 0 10px 40px rgba(0,0,0,0.1); text-align: center; }
-        .stats-overview, .sedes-section { margin-bottom: 2rem; }
+        .stats-overview, .sedes-section, .actions-section { margin-bottom: 2rem; }
         .stats-title { color: white; font-size: 1.5rem; margin-bottom: 1rem; display: flex; align-items: center; gap: 10px; text-shadow: 1px 1px 3px rgba(0,0,0,0.2); }
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
         .stat-card { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(20px); border-radius: 20px; padding: 2rem; text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,0.15); transition: all 0.3s ease; position: relative; overflow: hidden; }
         .stat-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px; }
-        .stat-card.primary::before { background: linear-gradient(45deg, #3498db, #2980b9); }
         .stat-card.success::before { background: linear-gradient(45deg, #27ae60, #2ecc71); }
         .stat-card.warning::before { background: linear-gradient(45deg, #f39c12, #e67e22); }
         .stat-card.danger::before { background: linear-gradient(45deg, #e74c3c, #c0392b); }
         .stat-card.info::before { background: linear-gradient(45deg, #9b59b6, #8e44ad); }
         .stat-card i { font-size: 3rem; margin-bottom: 1rem; opacity: 0.8; }
-        .stat-card.primary i { color: #3498db; } .stat-card.success i { color: #27ae60; } .stat-card.warning i { color: #f39c12; } .stat-card.danger i { color: #e74c3c; } .stat-card.info i { color: #9b59b6; }
+        .stat-card.success i { color: #27ae60; } 
+        .stat-card.warning i { color: #f39c12; } 
+        .stat-card.danger i { color: #e74c3c; } 
+        .stat-card.info i { color: #9b59b6; }
         .stat-card h3 { font-size: 2.5rem; font-weight: 700; margin-bottom: 0.5rem; color: #2c3e50; }
         .stat-card p { color: #666; font-size: 1rem; font-weight: 500; }
-        .sedes-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 2rem; margin-bottom: 2rem; }
-        .sede-card { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(20px); border-radius: 20px; padding: 1.5rem; box-shadow: 0 10px 40px rgba(0,0,0,0.1); transition: all 0.3s ease; }
-        .sede-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 2px solid #ecf0f1; }
-        .sede-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 1rem; }
-        .sede-stat { text-align: center; padding: 1rem; background: #f8f9fa; border-radius: 10px; }
-        .content-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 2rem; margin-bottom: 2rem; }
-        .movements-section, .quick-actions { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(20px); border-radius: 20px; padding: 1.5rem; box-shadow: 0 10px 40px rgba(0,0,0,0.1); }
+        .content-grid { display: grid; grid-template-columns: 1fr; gap: 2rem; margin-bottom: 2rem; }
         .card { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); border-radius: 15px; padding: 1.5rem; box-shadow: 0 8px 32px rgba(0,0,0,0.1); }
-        .card h3 { color: #2c3e50; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 10px; }
+        .card h3 { color: #2c3e50; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 10px; position: sticky; top: 0; background: rgba(255, 255, 255, 0.98); backdrop-filter: blur(10px); z-index: 50; padding: 1rem 0; margin: -1.5rem -1.5rem 1.5rem -1.5rem; padding-left: 1.5rem; padding-right: 1.5rem; border-radius: 15px 15px 0 0; }
         .card h3 i { color: <?= $color_actual_hex ?>; }
         .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
         .form-group { display: flex; flex-direction: column; }
@@ -147,68 +636,255 @@ if ($vista_actual != 'vista_inventario_dashboard' && isset($sedes_config[$vista_
         .form-group label { margin-bottom: 0.5rem; font-weight: 500; color: #555; }
         .btn { padding: 12px 24px; border: none; border-radius: 25px; font-weight: 500; cursor: pointer; transition: all 0.3s ease; display: inline-flex; align-items: center; gap: 8px; text-decoration: none; margin: 5px; }
         .btn-primary { background: <?= $vista_actual == 'vista_inventario_dashboard' ? 'linear-gradient(45deg, #667eea, #764ba2)' : (isset($sedes_config[$vista_actual]) ? $sedes_config[$vista_actual]['gradient'] : '#ccc') ?>; color: white; }
-        .btn-success { background: linear-gradient(45deg, #27ae60, #229954); color: white; }
-        .btn-danger { background: linear-gradient(45deg, #e74c3c, #c0392b); color: white; }
-        table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .btn-secondary { background: linear-gradient(45deg, #6c757d, #545b62); color: white; }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0,0,0,0.2); }
+        table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-top: 1.5rem; }
+        .table-container { 
+            max-height: 400px; 
+            overflow: hidden;
+            border-radius: 8px; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); 
+            margin-top: 0; 
+            position: relative; 
+            background: white;
+        }
+        .table-container table { margin-top: 0; box-shadow: none; border-radius: 0; }
+        .table-container thead { display: block; position: relative; z-index: 100; }
+        .table-container tbody { display: block; max-height: 340px; overflow-y: auto; }
+        .table-container tbody::-webkit-scrollbar { width: 8px; }
+        .table-container tbody::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
+        .table-container tbody::-webkit-scrollbar-thumb { background: <?= $color_actual_hex ?>; border-radius: 4px; }
+        .table-container tbody::-webkit-scrollbar-thumb:hover { background: rgba(<?= $color_actual_rgb ?>, 0.8); }
+        .table-container thead tr, .table-container tbody tr { display: table; width: 100%; table-layout: fixed; }
+        .table-container th { background: <?= $vista_actual == 'vista_inventario_dashboard' ? 'linear-gradient(45deg, #34495e, #2c3e50)' : (isset($sedes_config[$vista_actual]) ? $sedes_config[$vista_actual]['gradient'] : '#ccc') ?> !important; position: relative; box-shadow: none; }
         th { background: <?= $vista_actual == 'vista_inventario_dashboard' ? 'linear-gradient(45deg, #34495e, #2c3e50)' : (isset($sedes_config[$vista_actual]) ? $sedes_config[$vista_actual]['gradient'] : '#ccc') ?>; color: white; padding: 15px 10px; text-align: left; font-weight: 600; }
         td { padding: 12px 10px; border-bottom: 1px solid #ecf0f1; vertical-align: middle; }
-        .action-buttons { display: flex; flex-direction: column; gap: 1rem; }
-        .table-actions { display: flex; gap: 5px; flex-wrap: wrap; }
         input, select, textarea { width: 100%; padding: 12px; border: 2px solid #e1e5e9; border-radius: 8px; font-size: 1rem; transition: all 0.3s ease; background: #fdfdfd; }
         input:focus, select:focus, textarea:focus { outline: none; border-color: <?= $color_actual_hex ?>; box-shadow: 0 0 0 4px rgba(<?= $color_actual_rgb ?>, 0.2); }
-        
-        /* ===== ESTILOS PARA TÉCNICOS ===== */
         .tecnico-badge { background: linear-gradient(45deg, #6c757d, #495057); color: white; padding: 3px 10px; border-radius: 15px; font-size: 0.8rem; font-weight: 500; display: inline-block; }
-        .form-group.tecnico-select { position: relative; }
-        .form-group.tecnico-select .icon-user { position: absolute; left: 12px; top: 38px; color: <?= $color_actual_hex ?>; z-index: 1; pointer-events: none; }
-        .form-group.tecnico-select select { padding-left: 40px; position: relative; z-index: 2; }
-        .form-group.tecnico-select label { position: relative; z-index: 0; }
-        
-        /* ===== SECCIÓN DE ESTILOS NUEVA Y MEJORADA PARA MOVIMIENTOS ===== */
-        .movement-list { padding: 0; list-style: none; }
-        .movement-item { display: flex; align-items: center; gap: 1rem; padding: 1rem 0; border-bottom: 1px solid #f0f0f0; }
-        .movement-list li:last-child .movement-item { border-bottom: none; }
-        .movement-icon { font-size: 1.5rem; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border-radius: 50%; color: white; flex-shrink: 0; }
-        .movement-icon.entrada { background-color: #28a745; }
-        .movement-icon.salida { background-color: #dc3545; }
-        .movement-details { flex-grow: 1; }
-        .movement-details h4 { font-size: 1rem; font-weight: 600; color: #2c3e50; margin: 0 0 4px 0; }
-        .movement-details p { font-size: 0.85rem; color: #777; margin: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-        .sede-badge-inline { padding: 3px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; background: #e9ecef; color: #495057; }
-        .movement-quantity { text-align: right; }
-        .movement-quantity strong { font-size: 1.2rem; font-weight: 700; color: #333; }
-        .movement-quantity span { font-size: 0.8rem; text-transform: uppercase; color: #888; display: block; }
-        .no-movements { text-align: center; padding: 2rem; color: #888; }
-        /* ===== FIN DE LA SECCIÓN DE ESTILOS ===== */
-
+        .usuario-badge { background: linear-gradient(45deg, #3498db, #2980b9); color: white; padding: 3px 10px; border-radius: 15px; font-size: 0.8rem; font-weight: 500; display: inline-block; }
+        .movement-badge { padding: 5px 12px; border-radius: 15px; font-size: 0.8rem; font-weight: 600; color: white; display: inline-flex; align-items: center; gap: 6px; }
+        .movement-in { background: linear-gradient(45deg, #28a745, #218838); }
+        .movement-out { background: linear-gradient(45deg, #dc3545, #c82333); }
+        .movement-neutral { background: linear-gradient(45deg, #17a2b8, #117a8b); }
+        .actions-grid { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(20px); border-radius: 20px; padding: 2rem; box-shadow: 0 10px 40px rgba(0,0,0,0.1); display: flex; justify-content: center; align-items: center; gap: 2rem; flex-wrap: wrap; }
+        .btn-action { padding: 15px 30px; font-size: 1.1rem; text-transform: uppercase; font-weight: 600; box-shadow: 0 5px 15px rgba(0,0,0,0.1); transform: translateY(0); }
+        .btn-action:hover { transform: translateY(-3px); box-shadow: 0 8px 25px rgba(0,0,0,0.15); }
+        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; justify-content: center; align-items: center; z-index: 10000; animation: fadeIn 0.3s ease; }
+        .modal-content { background: white; border-radius: 20px; padding: 2rem; max-width: 600px; width: 90%; box-shadow: 0 20px 60px rgba(0,0,0,0.3); animation: slideUp 0.3s ease; max-height: 90vh; overflow-y: auto; }
+        .modal-header { text-align: center; margin-bottom: 1.5rem; }
+        .modal-icon { width: 80px; height: 80px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 1rem; animation: pulse 2s infinite; }
+        .modal-icon.error { background: linear-gradient(45deg, #e74c3c, #c0392b); }
+        .modal-icon.warning { background: linear-gradient(45deg, #f39c12, #e67e22); }
+        .modal-icon.success { background: linear-gradient(45deg, #27ae60, #2ecc71); }
+        .modal-icon i { font-size: 2.5rem; color: white; }
+        .modal-title { color: #2c3e50; margin: 0; font-size: 1.8rem; }
+        .modal-message { background: #fff3cd; border-left: 4px solid #f39c12; padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem; }
+        .modal-message.error { background: #f8d7da; border-left-color: #e74c3c; }
+        .modal-message.success { background: #d4edda; border-left-color: #27ae60; }
+        .modal-message.warning { background: #fff3cd; border-left-color: #f39c12; }
+        .modal-message p { margin: 0; color: #856404; font-size: 1.1rem; font-weight: 500; }
+        .modal-message.error p { color: #721c24; }
+        .modal-message.success p { color: #155724; }
+        .modal-message.warning p { color: #856404; }
+        .modal-details { background: #f8f9fa; padding: 1.5rem; border-radius: 10px; margin-bottom: 1.5rem; }
+        .modal-details h3 { color: #2c3e50; margin-top: 0; margin-bottom: 1rem; font-size: 1.2rem; }
+        .modal-details ul { list-style: none; padding: 0; margin: 0; }
+        .modal-details li { padding: 0.7rem; margin-bottom: 0.5rem; background: white; border-radius: 5px; color: #555; font-size: 0.95rem; border-left: 3px solid #667eea; }
+        .modal-details li i { color: #667eea; margin-right: 8px; }
+        .modal-buttons { text-align: center; display: flex; gap: 1rem; justify-content: center; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideUp { from { transform: translateY(50px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
     </style>
 </head>
 <body>
     <div class="header">
         <div class="header-content">
-            <h1><i class="fas fa-<?= $vista_actual == 'vista_inventario_dashboard' ? 'tachometer-alt' : 'boxes' ?>"></i> <?= $vista_actual == 'vista_inventario_dashboard' ? 'Dashboard de Inventario' : 'Inventario ' . ($sedes_config[$vista_actual]['nombre'] ?? 'Desconocida') ?>
+            <h1>
+                <i class="fas fa-<?= $vista_actual == 'vista_inventario_dashboard' ? 'tachometer-alt' : 'boxes' ?>"></i> 
+                <?= $vista_actual == 'vista_inventario_dashboard' ? 'Dashboard de Inventario' : 'Inventario ' . ($sedes_config[$vista_actual]['nombre'] ?? 'Desconocida') ?>
                 <?php if ($vista_actual != 'vista_inventario_dashboard' && isset($sedes_config[$vista_actual])): ?>
                     <span class="sede-badge" style="background: <?= $sedes_config[$vista_actual]['gradient'] ?>;"><?= htmlspecialchars($sedes_config[$vista_actual]['nombre']) ?></span>
                 <?php endif; ?>
             </h1>
             <div class="nav-buttons">
                 <a href="dashboard.php" class="btn-nav"><i class="fas fa-home"></i> Página Principal</a>
-                <a href="inventario.php" class="btn-nav <?= $vista_actual == 'vista_inventario_dashboard' ? 'active' : '' ?>"><i class="fas fa-tachometer-alt"></i> Dashboard Inventario</a>
+                <a href="inventario.php" class="btn-nav <?= $vista_actual == 'vista_inventario_dashboard' ? 'active' : '' ?>"><i class="fas fa-tachometer-alt"></i> Volver a Menu</a>
                 <?php foreach($sedes_config as $id => $sede): ?>
                     <a href="?sede_id=<?= $id ?>" class="btn-nav <?= $vista_actual == $id ? 'active' : '' ?>" style="<?= $vista_actual == $id ? '' : 'background: '.$sede['gradient'].'; color: white; border-color: transparent;' ?>"><i class="fas fa-building"></i> <?= htmlspecialchars($sede['nombre']) ?></a>
                 <?php endforeach; ?>
-                <div class="user-info"><i class="fas fa-user-circle"></i> <span>Administrador</span><a href="logout.php" class="btn-nav logout-btn"><i class="fas fa-sign-out-alt"></i></a></div>
+                <div class="user-info">
+                    <i class="fas fa-user-circle"></i> 
+                    <span>Administrador</span>
+                    <a href="logout.php" class="btn-nav logout-btn"><i class="fas fa-sign-out-alt"></i></a>
+                </div>
             </div>
         </div>
     </div>
+
+    <?php if (isset($_SESSION['error_validacion'])): ?>
+    <div class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-icon error">
+                    <i class="fas fa-exclamation-triangle"></i>
+                </div>
+                <h2 class="modal-title"><?= $_SESSION['error_validacion']['titulo'] ?></h2>
+            </div>
+            
+            <div class="modal-message error">
+                <p><?= $_SESSION['error_validacion']['mensaje'] ?></p>
+            </div>
+            
+            <div class="modal-details">
+                <h3><i class="fas fa-info-circle"></i> Detalles del Error:</h3>
+                <ul>
+                    <?php foreach ($_SESSION['error_validacion']['detalles'] as $detalle): ?>
+                    <li>
+                        <i class="fas fa-chevron-right"></i>
+                        <?= $detalle ?>
+                    </li>
+                    <?php endforeach; ?>
+                </ul>
+            </div>
+            
+            <div class="modal-buttons">
+                <form method="GET" action="inventario.php" style="margin: 0;">
+                    <input type="hidden" name="sede_id" value="<?= $vista_actual ?>">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-check"></i> Entendido
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <?php unset($_SESSION['error_validacion']); endif; ?>
+
+    <?php if (isset($_SESSION['advertencia_instalacion'])): ?>
+    <div class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-icon warning">
+                    <i class="fas fa-exclamation-triangle"></i>
+                </div>
+                <h2 class="modal-title"><?= $_SESSION['advertencia_instalacion']['titulo'] ?></h2>
+            </div>
+            
+            <div class="modal-message warning">
+                <p><?= $_SESSION['advertencia_instalacion']['mensaje'] ?></p>
+            </div>
+            
+            <div class="modal-details">
+                <h3><i class="fas fa-clipboard-list"></i> Detalles de la Advertencia:</h3>
+                <ul>
+                    <?php foreach ($_SESSION['advertencia_instalacion']['detalles'] as $detalle): ?>
+                    <li>
+                        <i class="fas fa-chevron-right"></i>
+                        <?= $detalle ?>
+                    </li>
+                    <?php endforeach; ?>
+                </ul>
+            </div>
+            
+            <div class="modal-buttons">
+                <form method="POST" action="?sede_id=<?= $vista_actual ?>" style="margin: 0; display: inline;">
+                    <input type="hidden" name="confirmar_movimiento" value="1">
+                    <input type="hidden" name="producto_id" value="<?= $_SESSION['advertencia_instalacion']['datos']['producto_id'] ?>">
+                    <input type="hidden" name="tipo" value="<?= $_SESSION['advertencia_instalacion']['datos']['tipo'] ?>">
+                    <input type="hidden" name="tecnico_id" value="<?= $_SESSION['advertencia_instalacion']['datos']['tecnico_id'] ?>">
+                    <input type="hidden" name="cantidad" value="<?= $_SESSION['advertencia_instalacion']['datos']['cantidad'] ?>">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-check"></i> Continuar y Registrar
+                    </button>
+                </form>
+                <form method="GET" action="inventario.php" style="margin: 0; display: inline;">
+                    <input type="hidden" name="sede_id" value="<?= $vista_actual ?>">
+                    <button type="submit" class="btn btn-secondary">
+                        <i class="fas fa-times"></i> Cancelar
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <?php unset($_SESSION['advertencia_instalacion']); endif; ?>
+
+    <?php if (isset($_SESSION['confirmacion_movimiento'])): ?>
+    <div class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-icon warning">
+                    <i class="fas fa-question-circle"></i>
+                </div>
+                <h2 class="modal-title"><?= $_SESSION['confirmacion_movimiento']['titulo'] ?></h2>
+            </div>
+            
+            <div class="modal-message">
+                <p><?= $_SESSION['confirmacion_movimiento']['mensaje'] ?></p>
+            </div>
+            
+            <div class="modal-details">
+                <h3><i class="fas fa-clipboard-list"></i> Detalles del Movimiento:</h3>
+                <ul>
+                    <?php foreach ($_SESSION['confirmacion_movimiento']['detalles'] as $detalle): ?>
+                    <li>
+                        <i class="fas fa-chevron-right"></i>
+                        <?= $detalle ?>
+                    </li>
+                    <?php endforeach; ?>
+                </ul>
+            </div>
+            
+            <div class="modal-buttons">
+                <form method="POST" action="?sede_id=<?= $vista_actual ?>" style="margin: 0; display: inline;">
+                    <input type="hidden" name="confirmar_movimiento" value="1">
+                    <input type="hidden" name="producto_id" value="<?= $_SESSION['confirmacion_movimiento']['datos']['producto_id'] ?>">
+                    <input type="hidden" name="tipo" value="<?= $_SESSION['confirmacion_movimiento']['datos']['tipo'] ?>">
+                    <input type="hidden" name="tecnico_id" value="<?= $_SESSION['confirmacion_movimiento']['datos']['tecnico_id'] ?>">
+                    <input type="hidden" name="cantidad" value="<?= $_SESSION['confirmacion_movimiento']['datos']['cantidad'] ?>">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-check"></i> Sí, Registrar
+                    </button>
+                </form>
+                <form method="GET" action="inventario.php" style="margin: 0; display: inline;">
+                    <input type="hidden" name="sede_id" value="<?= $vista_actual ?>">
+                    <button type="submit" class="btn btn-secondary">
+                        <i class="fas fa-times"></i> Cancelar
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <?php unset($_SESSION['confirmacion_movimiento']); endif; ?>
+
+    <?php if (isset($_SESSION['mensaje_exito'])): ?>
+    <div class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-icon success">
+                    <i class="fas fa-check-circle"></i>
+                </div>
+                <h2 class="modal-title"><?= $_SESSION['mensaje_exito']['titulo'] ?></h2>
+            </div>
+            
+            <div class="modal-message success">
+                <p><?= $_SESSION['mensaje_exito']['mensaje'] ?></p>
+            </div>
+            
+            <div class="modal-buttons">
+                <form method="GET" action="inventario.php" style="margin: 0;">
+                    <input type="hidden" name="sede_id" value="<?= $vista_actual ?>">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-check"></i> Continuar
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <?php unset($_SESSION['mensaje_exito']); endif; ?>
+
     <div class="container">
         <?php if ($vista_actual == 'vista_inventario_dashboard'): ?>
-            <!-- VISTA DASHBOARD DE INVENTARIO -->
-            <div class="welcome-section">
-                <h2>Dashboard de Inventario</h2>
-                <p>Aquí puedes ver un resumen del estado del inventario en todas las sedes y acceder a cada una de ellas.</p>
-                <a href="dashboard.php" class="btn btn-primary" style="margin-top: 1rem;"><i class="fas fa-arrow-left"></i> Volver al Dashboard Principal</a>
-            </div>
             <div class="stats-overview">
                 <h2 class="stats-title"><i class="fas fa-chart-pie"></i> Resumen General</h2>
                 <div class="stats-grid">
@@ -217,177 +893,253 @@ if ($vista_actual != 'vista_inventario_dashboard' && isset($sedes_config[$vista_
                     <div class="stat-card danger"><i class="fas fa-times-circle"></i><h3><?= number_format($totales['sin_stock']) ?></h3><p>Productos Sin Stock</p></div>
                 </div>
             </div>
-            <div class="sedes-section">
-                <h2 class="stats-title"><i class="fas fa-sitemap"></i> Estadísticas por Sede</h2>
-                <div class="sedes-grid">
-                    <?php foreach($sedes_config as $id => $sede): $stats = $stats_por_sede[$id]; ?>
-                        <div class="sede-card" style="border-left: 5px solid <?= $sede['color'] ?>">
-                            <div class="sede-header"><h3><i class="fas fa-map-marker-alt" style="color: <?= $sede['color'] ?>"></i> <?= htmlspecialchars($sede['nombre']) ?></h3><a href="?sede_id=<?= $id ?>" class="btn btn-primary" style="background: <?= $sede['gradient'] ?>"><i class="fas fa-eye"></i> Ver Inventario</a></div>
-                            <div class="sede-stats"><div class="sede-stat"><h4><?= $stats['total_productos'] ?></h4><span>Productos</span></div><div class="sede-stat"><h4><?= $stats['stock_bajo'] ?></h4><span>Stock Bajo</span></div><div class="sede-stat"><h4><?= $stats['sin_stock'] ?></h4><span>Sin Stock</span></div><div class="sede-stat"><h4><?= $stats['movimientos_hoy'] ?></h4><span>Mov. Hoy</span></div></div>
-                        </div>
+
+            <div class="actions-section">
+                <h2 class="stats-title"><i class="fas fa-cogs"></i> Acciones</h2>
+                <div class="actions-grid">
+                    <a href="reportes_2.php" class="btn btn-primary btn-action"><i class="fas fa-chart-line"></i> Ver Reportes Detallados</a>
+                    <a href="tecnicos.php" class="btn btn-primary btn-action"><i class="fas fa-users-cog"></i> Gestión de Técnicos</a>
+                    <?php foreach($sedes_config as $id => $sede): ?>
+                    <a href="?sede_id=<?= $id ?>" class="btn btn-primary btn-action" style="background: <?= $sede['gradient'] ?>"><i class="fas fa-eye"></i> Ver Inventario <?= htmlspecialchars($sede['nombre']) ?></a>
                     <?php endforeach; ?>
                 </div>
             </div>
-            <div class="content-grid">
-                <!-- ===== SECCIÓN DE MOVIMIENTOS CON NUEVO ESTILO ===== -->
-                <div class="movements-section">
-                    <h3><i class="fas fa-history"></i> Últimos Movimientos Globales</h3>
-                    <?php if (empty($ultimos_movimientos)): ?>
-                        <div class="no-movements">
-                            <i class="fas fa-box-open fa-2x"></i>
-                            <p>No hay movimientos recientes.</p>
-                        </div>
-                    <?php else: ?>
-                        <ul class="movement-list">
-                            <?php foreach ($ultimos_movimientos as $mov): ?>
-                                <li>
-                                    <div class="movement-item">
-                                        <div class="movement-icon <?= $mov['tipo'] ?>">
-                                            <i class="fas fa-<?= $mov['tipo'] == 'entrada' ? 'plus' : 'minus' ?>"></i>
-                                        </div>
-                                        <div class="movement-details">
-                                            <h4><?= htmlspecialchars($mov['producto_nombre']) ?></h4>
-                                            <p>
-                                                <i class="far fa-calendar-alt"></i> <?= date('d/m/Y H:i', strtotime($mov['fecha'])) ?>
-                                                <span class="sede-badge-inline"><?= htmlspecialchars($mov['sede_nombre']) ?></span>
-                                                <?php if (!empty($mov['tecnico_nombre'])): ?>
-                                                    <span class="tecnico-badge"><i class="fas fa-user"></i> <?= htmlspecialchars($mov['tecnico_nombre']) ?></span>
-                                                <?php endif; ?>
-                                            </p>
-                                        </div>
-                                        <div class="movement-quantity">
-                                            <strong><?= $mov['cantidad'] ?></strong>
-                                            <span><?= ucfirst($mov['tipo']) ?></span>
-                                        </div>
-                                    </div>
-                                </li>
-                            <?php endforeach; ?>
-                        </ul>
-                    <?php endif; ?>
-                </div>
-                <!-- ===== FIN DE LA SECCIÓN DE MOVIMIENTOS ===== -->
-                <div class="quick-actions">
-                    <h3><i class="fas fa-bolt"></i> Acciones Rápidas</h3>
-                    <div class="action-buttons"><a href="reportes_2.php" class="btn btn-primary" style="background: linear-gradient(45deg, #17a2b8, #117a8b);"><i class="fas fa-chart-line"></i> Ver Reportes Detallados</a><a href="configuracion.php" class="btn btn-primary" style="background: linear-gradient(45deg, #6c757d, #495057);"><i class="fas fa-cog"></i> Configuración del Sistema</a>
-					<a href="tecnicos.php" class="btn btn-primary" style="background: linear-gradient(45deg, #6c757d, #495057);"><i class="fas fa-users"></i> Gestión de Técnicos</a></div>
-                </div>
-            </div>
         <?php else: ?>
-            <!-- VISTA DE SEDE ESPECÍFICA -->
             <div class="stats-grid">
                 <div class="stat-card info"><i class="fas fa-cube"></i><h3><?= $total_productos ?></h3><p>Total Productos</p></div>
                 <div class="stat-card success"><i class="fas fa-exchange-alt"></i><h3><?= $movimientos_hoy ?></h3><p>Movimientos Hoy</p></div>
                 <div class="stat-card warning"><i class="fas fa-exclamation-triangle"></i><h3><?= $stock_bajo ?></h3><p>Stock Bajo</p></div>
                 <div class="stat-card danger"><i class="fas fa-times-circle"></i><h3><?= $sin_stock ?></h3><p>Sin Stock</p></div>
             </div>
+            
             <div class="content-grid">
-                <div class="card">
-                    <h3><i class="fas fa-plus-circle"></i> Agregar Producto</h3>
-                    <form method="POST" action="?sede_id=<?= $vista_actual ?>">
-                        <div class="form-grid">
-                            <div class="form-group"><label>Nombre</label><input type="text" name="nombre" required></div>
-                            <div class="form-group"><label>Código</label><input type="text" name="codigo" required></div>
-                            <div class="form-group"><label>Stock Inicial</label><input type="number" name="stock_actual" value="0" required></div>
-                            <div class="form-group"><label>Stock Mínimo</label><input type="number" name="stock_minimo" value="0" required></div>
-                            <div class="form-group full-width"><label>Descripción</label><textarea name="descripcion" rows="2"></textarea></div>
-                        </div>
-                        <input type="hidden" name="accion" value="agregar"><button class="btn btn-success" style="margin-top:1rem;"><i class="fas fa-save"></i> Guardar Producto</button>
-                    </form>
-                </div>
                 <div class="card">
                     <h3><i class="fas fa-people-carry"></i> Registrar Movimiento</h3>
                     <form method="POST" action="?sede_id=<?= $vista_actual ?>">
-                        <div class="form-group full-width"><label>Producto</label><select name="producto_id" required><option value="">Seleccione un producto...</option><?php foreach ($productos as $p): ?><option value="<?= $p['id'] ?>"><?= htmlspecialchars($p['nombre']) ?> (Stock: <?= $p['stock_actual'] ?>)</option><?php endforeach; ?></select></div>
                         <div class="form-grid">
-                            <div class="form-group"><label>Tipo de Movimiento</label><select name="tipo" required><option value="entrada">Entrada (+)</option><option value="salida">Salida (-)</option></select></div>
-                            <div class="form-group"><label>Cantidad</label><input type="number" name="cantidad" min="1" required></div>
+                            <div class="form-group tecnico-select full-width">
+                                <label><i class="fas fa-user"></i> Técnico Responsable</label>
+                                <select name="tecnico_id" id="tecnico_id">
+                                    <option value="">Seleccionar técnico (opcional)...</option>
+                                    <?php if (!empty($tecnicos)): ?>
+                                        <?php foreach ($tecnicos as $tecnico): ?>
+                                            <option value="<?= $tecnico['id'] ?>"><?= htmlspecialchars($tecnico['nombre']) ?></option>
+                                        <?php endforeach; ?>
+                                    <?php else: ?>
+                                        <option value="" disabled>No hay técnicos disponibles</option>
+                                    <?php endif; ?>
+                                </select>
+                            </div>
                         </div>
-                        <div class="form-group tecnico-select">
-                            <label><i class="fas fa-user"></i> Técnico Responsable</label>
-                            <i class="fas fa-user icon-user"></i>
-                            <select name="tecnico_id">
-                                <option value="">Seleccionar técnico (opcional)...</option>
-                                <?php if (!empty($tecnicos)): ?>
-                                    <?php foreach ($tecnicos as $tecnico): ?>
-                                        <option value="<?= $tecnico['id'] ?>"><?= htmlspecialchars($tecnico['nombre']) ?></option>
-                                    <?php endforeach; ?>
-                                <?php else: ?>
-                                    <option value="" disabled>No hay técnicos disponibles</option>
-                                <?php endif; ?>
+                        <div class="form-group full-width">
+                            <label>Producto</label>
+                            <select name="producto_id" id="producto_id" required>
+                                <option value="">Seleccione un producto...</option>
+                                <?php foreach ($productos as $p): ?>
+                                <option value="<?= $p['id'] ?>"><?= htmlspecialchars($p['nombre']) ?> (Part Number: <?= htmlspecialchars($p['part_number']) ?>)</option>
+                                <?php endforeach; ?>
                             </select>
                         </div>
-                        <input type="hidden" name="accion" value="movimiento"><button class="btn btn-primary" style="margin-top:1rem;"><i class="fas fa-check"></i> Registrar Movimiento</button>
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label>Tipo de Movimiento</label>
+                                <select name="tipo" id="tipoMovimiento" required>
+                                    <option value="">Seleccionar tipo...</option>
+                                    <optgroup label="Entradas (+)">
+                                        <option value="Desinstalaciones">Desinstalaciones</option>
+                                        <option value="Sobrantes">Sobrantes</option>
+                                    </optgroup>
+                                    <optgroup label="Salidas (-)">
+                                        <option value="Preinstalaciones">Preinstalaciones</option>
+                                        <option value="Instalaciones OK">Instalaciones OK</option>
+                                    </optgroup>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Cantidad</label>
+                                <input type="number" name="cantidad" id="cantidad" min="1" step="1" required>
+                            </div>
+                        </div>
+                        <input type="hidden" name="accion" value="validar_movimiento">
+                        <button type="submit" class="btn btn-primary" style="margin-top:1rem;"><i class="fas fa-check"></i> Registrar Movimiento</button>
                     </form>
                 </div>
             </div>
-            <div class="table-container">
+            
+            <div class="card">
                 <h3><i class="fas fa-list"></i> Lista de Productos - <?= htmlspecialchars($sedes_config[$vista_actual]['nombre']) ?></h3>
-                <table>
-                    <thead><tr><th>ID</th><th>Nombre</th><th>Código</th><th>Descripción</th><th>Stock</th><th>Mínimo</th><th>Estado</th><th>Acciones</th></tr></thead>
-                    <tbody>
-                        <?php foreach ($productos as $p): 
-                            $stock_class = 'stock-ok'; if ($p['stock_actual'] <= 0) $stock_class = 'stock-out'; elseif ($p['stock_actual'] <= $p['stock_minimo']) $stock_class = 'stock-low';
-                        ?>
-                        <tr><form method="POST" action="?sede_id=<?= $vista_actual ?>">
-                            <td><?= $p['id'] ?></td>
-                            <td><input type="text" name="nombre" value="<?= htmlspecialchars($p['nombre']) ?>" style="border:none;background:transparent;"></td>
-                            <td><input type="text" name="codigo" value="<?= htmlspecialchars($p['codigo']) ?>" style="border:none;background:transparent;"></td>
-                            <td><input type="text" name="descripcion" value="<?= htmlspecialchars($p['descripcion']) ?>" style="border:none;background:transparent;"></td>
-                            <td><strong><?= $p['stock_actual'] ?></strong></td>
-                            <td><input type="number" name="stock_minimo" value="<?= $p['stock_minimo'] ?>" style="border:none;background:transparent;width:60px;"></td>
-                            <td><span class="stock-indicator <?= $stock_class ?>"><?php if ($p['stock_actual'] <= 0) echo 'Sin Stock'; elseif ($p['stock_actual'] <= $p['stock_minimo']) echo 'Stock Bajo'; else echo 'Normal'; ?></span></td>
-                            <td><div class="table-actions"><input type="hidden" name="id" value="<?= $p['id'] ?>"><button name="accion" value="editar" class="btn btn-primary" style="padding:8px 12px;margin:2px;"><i class="fas fa-edit"></i></button><button name="accion" value="eliminar" class="btn btn-danger" style="padding:8px 12px;margin:2px;" onclick="return confirm('¿Eliminar este producto? Esta acción no se puede deshacer.')"><i class="fas fa-trash"></i></button></div></td>
-                        </form></tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Nombre</th>
+                                <th>Tipo de Tecnología</th>
+                                <th>Part Number</th>
+                                <th>Stock</th>
+                                <th>Mínimo</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($productos as $p): ?>
+                            <tr>
+                                <td><?= $p['id'] ?></td>
+                                <td><?= htmlspecialchars($p['nombre']) ?></td>
+                                <td><?= htmlspecialchars($p['tipo_tecnologia_nombre'] ?? 'Sin asignar') ?></td>
+                                <td><?= htmlspecialchars($p['part_number']) ?></td>
+                                <td><strong><?= $p['stock_actual'] ?></strong></td>
+                                <td><?= $p['stock_minimo'] ?></td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
             </div>
-            <div class="table-container">
+            
+            <div class="card">
                 <h3><i class="fas fa-history"></i> Historial de Movimientos Recientes</h3>
-                <table>
-                    <thead><tr><th>ID</th><th>Producto</th><th>Tipo</th><th>Cantidad</th><th>Técnico</th><th>Fecha</th></tr></thead>
-                    <tbody>
-                        <?php foreach ($movimientos as $m): ?>
-                        <tr>
-                            <td><?= $m['id'] ?></td><td><?= htmlspecialchars($m['nombre']) ?></td>
-                            <td><span class="<?= $m['tipo'] == 'entrada' ? 'movement-in' : 'movement-out' ?>"><i class="fas fa-<?= $m['tipo'] == 'entrada' ? 'arrow-up' : 'arrow-down' ?>"></i> <?= ucfirst($m['tipo']) ?></span></td>
-                            <td><strong><?= $m['cantidad'] ?></strong></td>
-                            <td>
-                                <?php if (!empty($m['tecnico_nombre'])): ?>
-                                    <span class="tecnico-badge"><i class="fas fa-user"></i> <?= htmlspecialchars($m['tecnico_nombre']) ?></span>
-                                <?php else: ?>
-                                    <span style="color: #999; font-style: italic;">Sin asignar</span>
-                                <?php endif; ?>
-                            </td>
-                            <td><?= date('d/m/Y H:i', strtotime($m['fecha'])) ?></td>
-                        </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Producto</th>
+                                <th>Tipo</th>
+                                <th>Cantidad</th>
+                                <th>Técnico</th>
+                                <th>Fecha</th>
+                                <th>Registrado por</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php 
+                            $tipos_entrada_historial = ['Desinstalaciones', 'Sobrantes'];
+                            $tipos_salida_historial = ['Preinstalaciones'];
+                            $tipos_neutral_historial = ['Instalaciones OK'];
+
+                            foreach ($movimientos as $m): 
+                                $tipo_movimiento = isset($m['tipo']) && !empty(trim($m['tipo'])) ? trim($m['tipo']) : 'Sin tipo';
+                                
+                                $badge_class = 'movement-neutral';
+                                $icon_class = 'fa-info-circle';
+
+                                if (in_array($tipo_movimiento, $tipos_entrada_historial)) {
+                                    $badge_class = 'movement-in';
+                                    $icon_class = 'fa-arrow-up';
+                                } elseif (in_array($tipo_movimiento, $tipos_salida_historial)) {
+                                    $badge_class = 'movement-out';
+                                    $icon_class = 'fa-arrow-down';
+                                } elseif (in_array($tipo_movimiento, $tipos_neutral_historial)) {
+                                    $badge_class = 'movement-neutral';
+                                    $icon_class = 'fa-check-circle';
+                                }
+                            ?>
+                            <tr>
+                                <td><?= $m['id'] ?></td>
+                                <td><?= htmlspecialchars($m['nombre']) ?></td>
+                                <td>
+                                    <span class="movement-badge <?= $badge_class ?>">
+                                        <i class="fas <?= $icon_class ?>"></i>
+                                        <?= htmlspecialchars($tipo_movimiento) ?>
+                                    </span>
+                                </td>
+                                <td><strong><?= $m['cantidad'] ?></strong></td>
+                                <td>
+                                    <?php if (!empty($m['tecnico_nombre'])): ?>
+                                        <span class="tecnico-badge"><i class="fas fa-user"></i> <?= htmlspecialchars($m['tecnico_nombre']) ?></span>
+                                    <?php else: ?>
+                                        <span style="color: #999; font-style: italic;">Sin asignar</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td><?= date('d/m/Y H:i', strtotime($m['fecha'])) ?></td>
+                                <td>
+                                    <?php if (!empty($m['usuario_registro'])): ?>
+                                        <span class="usuario-badge"><i class="fas fa-user-circle"></i> <?= htmlspecialchars($m['usuario_registro']) ?></span>
+                                    <?php else: ?>
+                                        <span style="color: #999; font-style: italic;">No registrado</span>
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
             </div>
         <?php endif; ?>
     </div>
 
     <script>
-        // Script para mejorar la experiencia del usuario al seleccionar técnicos
         document.addEventListener('DOMContentLoaded', function() {
-            const tipoSelect = document.querySelector('select[name="tipo"]');
+            const tipoSelect = document.getElementById('tipoMovimiento');
             const tecnicoLabel = document.querySelector('.form-group.tecnico-select label');
-            
-            if (tipoSelect && tecnicoLabel) {
-                function actualizarLabelTecnico() {
-                    const tipo = tipoSelect.value;
-                    if (tipo === 'entrada') {
-                        tecnicoLabel.innerHTML = '<i class="fas fa-user"></i> Técnico que entrega';
-                    } else if (tipo === 'salida') {
-                        tecnicoLabel.innerHTML = '<i class="fas fa-user"></i> Técnico que recibe';
+            const tecnicoSelect = document.getElementById('tecnico_id');
+            const tecnicoGroup = document.querySelector('.form-group.tecnico-select');
+
+            const tiposEntrada = ['Desinstalaciones', 'Sobrantes'];
+            const tiposSalida = ['Preinstalaciones'];
+            const tiposNeutral = ['Instalaciones OK'];
+
+            function actualizarFormularioMovimiento() {
+                if (!tipoSelect) return;
+                const tipoMovimiento = tipoSelect.value;
+                
+                if (tecnicoGroup) {
+                    tecnicoGroup.style.border = '';
+                    tecnicoGroup.style.padding = '';
+                    tecnicoGroup.style.background = '';
+                    tecnicoGroup.style.borderRadius = '';
+                }
+                
+                if (tecnicoSelect) {
+                    tecnicoSelect.required = false;
+                }
+                
+                if (tecnicoLabel) {
+                    if (tiposEntrada.includes(tipoMovimiento)) {
+                        tecnicoLabel.innerHTML = '<i class="fas fa-user"></i> Técnico que entrega material';
+                        
+                        if (tipoMovimiento === 'Sobrantes') {
+                            tecnicoLabel.innerHTML = '<i class="fas fa-user"></i> Técnico que entrega material <span style="color: #e74c3c; font-weight: bold;">*OBLIGATORIO*</span>';
+                            
+                            if (tecnicoGroup) {
+                                tecnicoGroup.style.border = '2px solid #e74c3c';
+                                tecnicoGroup.style.padding = '15px';
+                                tecnicoGroup.style.background = 'rgba(231, 76, 60, 0.05)';
+                                tecnicoGroup.style.borderRadius = '10px';
+                            }
+                            
+                            if (tecnicoSelect) {
+                                tecnicoSelect.required = true;
+                            }
+                        }
+                    } else if (tiposSalida.includes(tipoMovimiento)) {
+                        tecnicoLabel.innerHTML = '<i class="fas fa-user"></i> Técnico que recibe material';
+                    } else if (tiposNeutral.includes(tipoMovimiento)) {
+                        tecnicoLabel.innerHTML = '<i class="fas fa-user"></i> Técnico que realiza la instalación';
+                        
+                        if (tipoMovimiento === 'Instalaciones OK') {
+                            tecnicoLabel.innerHTML = '<i class="fas fa-user"></i> Técnico que realiza la instalación <span style="color: #e74c3c; font-weight: bold;">*OBLIGATORIO*</span>';
+                            
+                            if (tecnicoGroup) {
+                                tecnicoGroup.style.border = '2px solid #e74c3c';
+                                tecnicoGroup.style.padding = '15px';
+                                tecnicoGroup.style.background = 'rgba(231, 76, 60, 0.05)';
+                                tecnicoGroup.style.borderRadius = '10px';
+                            }
+                            
+                            if (tecnicoSelect) {
+                                tecnicoSelect.required = true;
+                            }
+                        }
                     } else {
                         tecnicoLabel.innerHTML = '<i class="fas fa-user"></i> Técnico Responsable';
                     }
                 }
-                
-                tipoSelect.addEventListener('change', actualizarLabelTecnico);
-                actualizarLabelTecnico(); // Ejecutar al cargar la página
+            }
+            
+            if (tipoSelect) {
+                tipoSelect.addEventListener('change', actualizarFormularioMovimiento);
+                actualizarFormularioMovimiento();
             }
         });
     </script>
