@@ -211,17 +211,17 @@ ob_end_flush();
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: var(--bg-color); color: var(--text-color); }
         .header { background: var(--card-bg); padding: 1.25rem 2rem; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
-        .header-content { display: flex; justify-content: space-between; align-items: center; max-width: 1600px; margin: 0 auto; }
+        .header-content { display: flex; justify-content: space-between; align-items: center; max-width: 1600px; margin: 0 auto; flex-wrap: wrap; gap: 1rem; }
         .header h1 { font-size: 1.75rem; display: flex; align-items: center; gap: 12px; }
         .header h1 i { color: var(--primary-color); }
-        .user-info { display: flex; align-items: center; gap: 15px; }
+        .user-info { display: flex; align-items: center; gap: 15px; flex-wrap: wrap; }
         .user-info a { text-decoration: none; color: inherit; font-weight: 500; }
         .logout-btn { background: #fee2e2; color: #ef4444; font-size: 0.9rem; font-weight: 500; text-decoration: none; padding: 8px 16px; border-radius: 20px; transition: all 0.3s ease; display: flex; align-items: center; gap: 8px; }
         .logout-btn:hover { background: #ef4444; color: white; }
-        .container { max-width: 1600px; margin: 2rem auto; padding: 0 2rem; }
-        .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
-        .page-header h2 { font-size: 2.5rem; }
-        .card { background: var(--card-bg); border-radius: var(--border-radius); padding: 2rem; box-shadow: var(--shadow); margin-bottom: 2rem; }
+        .container { max-width: 1600px; margin: 2rem auto; padding: 0 1rem; }
+        .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem; }
+        .page-header h2 { font-size: clamp(1.5rem, 4vw, 2.5rem); }
+        .card { background: var(--card-bg); border-radius: var(--border-radius); padding: 1.5rem; box-shadow: var(--shadow); margin-bottom: 2rem; }
         .card-header { background: none; border-bottom: 1px solid #e2e8f0; padding-bottom: 1rem; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; }
         .card-header h3 { font-size: 1.5rem; }
         .btn { border: none; border-radius: 25px; font-weight: 600; cursor: pointer; transition: all 0.3s ease; display: inline-flex; align-items: center; gap: 8px; text-decoration: none; padding: 12px 24px; font-size: 1rem; }
@@ -231,26 +231,64 @@ ob_end_flush();
         .btn-success { background-color: #16a34a; color: white; }
         .btn:hover { transform: translateY(-3px); box-shadow: 0 8px 20px rgba(0,0,0,0.1); }
         .form-group { margin-bottom: 1.5rem; }
-        .form-group label { display: block; font-weight: 600; margin-bottom: 0.5rem; }
+        .form-group label { display: block; font-weight: 600; margin-bottom: 0.5rem; font-size: 0.95rem; }
         input, select, textarea { font-family: inherit; font-size: 1rem; width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 8px; }
         table { width: 100%; border-collapse: collapse; }
-        th { background: #f8fafc; color: #475569; padding: 15px; text-align: left; font-weight: 600; border-bottom: 2px solid #e2e8f0; }
-        td { padding: 15px; border-bottom: 1px solid #e2e8f0; vertical-align: middle; }
+        th { background: #f8fafc; color: #475569; padding: 15px; text-align: left; font-weight: 600; border-bottom: 2px solid #e2e8f0; font-size: 0.9rem; }
+        td { padding: 15px; border-bottom: 1px solid #e2e8f0; vertical-align: middle; font-size: 0.95rem; }
         tr:hover { background: #f8fafc; }
         .badge { font-size: 0.8rem; padding: 0.4em 0.8em; border-radius: 20px; font-weight: 600; }
         .bg-operativo { background-color: #dcfce7; color: #166534; } .bg-en-mantenimiento { background-color: #fef9c3; color: #854d0e; }
         .bg-dañado, .bg-de-baja { background-color: #fee2e2; color: #991b1b; }
         .bg-bueno { background-color: #dcfce7; color: #166534; } .bg-regular { background-color: #fef9c3; color: #854d0e; } .bg-malo { background-color: #fee2e2; color: #991b1b; }
-        .table-actions { display: flex; gap: 0.5rem; }
+        .table-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
         .table-actions .btn { padding: 8px 12px; border-radius: 20px; }
+        
+        /* MEJORAS PARA MODALES RESPONSIVOS */
+        .modal-dialog { max-width: 900px; margin: 1rem; }
+        .modal-dialog-scrollable { height: calc(100vh - 2rem); }
+        .modal-dialog-scrollable .modal-content { max-height: 100%; }
+        .modal-dialog-scrollable .modal-body { overflow-y: auto; max-height: calc(100vh - 200px); }
         .modal-content { border: none; border-radius: var(--border-radius); }
-        .modal-header { border-bottom: none; }
-        .modal-footer { border-top: 1px solid #e2e8f0; padding-top: 1rem; }
+        .modal-header { border-bottom: 1px solid #e2e8f0; padding: 1.25rem; }
+        .modal-header .modal-title { font-size: 1.25rem; font-weight: 600; }
+        .modal-body { padding: 1.5rem; }
         .modal-body .row > div { margin-bottom: 1rem; }
+        .modal-footer { border-top: 1px solid #e2e8f0; padding: 1rem 1.5rem; }
+        
         .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.5rem; }
         .nav-tabs { border-bottom: 2px solid #dee2e6; margin-bottom: 0; flex-wrap: wrap; }
-        .nav-tabs .nav-link { border: none; border-bottom: 2px solid transparent; color: #6c757d; font-weight: 600; padding: 0.75rem 1.25rem; text-decoration: none; display: flex; align-items: center; gap: 8px; }
+        .nav-tabs .nav-link { border: none; border-bottom: 2px solid transparent; color: #6c757d; font-weight: 600; padding: 0.75rem 1.25rem; text-decoration: none; display: flex; align-items: center; gap: 8px; font-size: 0.95rem; }
         .nav-tabs .nav-link.active { color: var(--primary-color); border-bottom-color: var(--primary-color); }
+        
+        /* RESPONSIVE MEJORADO */
+        @media (max-width: 768px) {
+            .container { padding: 0 0.75rem; }
+            .header { padding: 1rem; }
+            .header-content { flex-direction: column; align-items: flex-start; }
+            .header h1 { font-size: 1.5rem; }
+            .user-info { width: 100%; justify-content: space-between; }
+            .card { padding: 1rem; border-radius: 10px; }
+            .page-header { flex-direction: column; align-items: flex-start; }
+            .btn { font-size: 0.9rem; padding: 10px 20px; }
+            .nav-tabs .nav-link { padding: 0.6rem 1rem; font-size: 0.85rem; }
+            table { font-size: 0.85rem; }
+            th, td { padding: 10px 8px; }
+            .modal-dialog { margin: 0.5rem; }
+            .modal-dialog-scrollable { height: calc(100vh - 1rem); }
+            .modal-body { padding: 1rem; }
+            .modal-body .col-md-6 { width: 100%; }
+            .summary-grid { grid-template-columns: 1fr; gap: 1rem; }
+            .table-actions { flex-direction: column; }
+            .table-actions .btn { width: 100%; justify-content: center; }
+        }
+        
+        @media (max-width: 576px) {
+            .header h1 { font-size: 1.25rem; }
+            .page-header h2 { font-size: 1.5rem; }
+            .card-header h3 { font-size: 1.25rem; }
+            input, select, textarea { font-size: 16px; } /* Evita zoom en iOS */
+        }
     </style>
 </head>
 <body>
@@ -258,7 +296,7 @@ ob_end_flush();
         <div class="header-content">
             <h1><i class="fas fa-server"></i> Gestión de Hardware</h1>
             <div class="user-info">
-                <a href="dashboard.php" class="btn btn-secondary btn-sm"><i class="fas fa-arrow-left"></i> Volver al Dashboard</a>
+                <a href="dashboard.php" class="btn btn-secondary btn-sm"><i class="fas fa-arrow-left"></i> Volver</a>
                 <a class="logout-btn" href="logout.php"><i class="fas fa-sign-out-alt"></i> Cerrar Sesión</a>
             </div>
         </div>
@@ -267,7 +305,7 @@ ob_end_flush();
     <div class="container">
         <?= $mensajeHtml; ?>
         
-        <div class="d-flex justify-content-between align-items-center flex-wrap-reverse gap-3 mb-4">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4">
              <ul class="nav nav-tabs">
                 <?php if (!empty($hardware_types)): ?>
                     <?php foreach($hardware_types as $key => $config): ?>
@@ -439,7 +477,7 @@ ob_end_flush();
                             <input type="hidden" name="accion" value="agregar_revision"><input type="hidden" name="tipo" value="<?= $tipo_actual ?>"><input type="hidden" name="item_id" value="<?= $item_actual['id'] ?>">
                             <div class="modal-body">
                                 <div class="form-group"><label>Estado Reportado</label><select name="estado_revision" class="form-select" required><?php foreach($estados_revision as $e) echo "<option value='".htmlspecialchars($e)."'>".htmlspecialchars($e)."</option>"; ?></select></div>
-                                <div class="form-group"><label>Nuevo Estado General</label><select name="nuevo_estado_portatil" class="form-select" required><?php foreach($estados_generales as $e) { $sel = ($item_actual['estado'] == $e) ? 'selected' : ''; echo "<option value='".htmlspecialchars($e)."' $sel>".htmlspecialchars($e)."</option>"; } ?></select></div>
+                                <div class="form-group"><label>Nuevo Estado General</label><select name="nuevo_estado_item" class="form-select" required><?php foreach($estados_generales as $e) { $sel = ($item_actual['estado'] == $e) ? 'selected' : ''; echo "<option value='".htmlspecialchars($e)."' $sel>".htmlspecialchars($e)."</option>"; } ?></select></div>
                                 <div class="form-group"><label>Observaciones</label><textarea name="observaciones" rows="4" class="form-control" required></textarea></div>
                             </div>
                             <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button><button type="submit" class="btn btn-primary">Guardar Revisión</button></div>
