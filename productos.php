@@ -113,7 +113,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['accion'])) {
                 $stmt->execute([$nuevo_estado, $id]);
                 $mensaje = mostrarAlerta('Estado del producto cambiado a ' . ucfirst($nuevo_estado) . '.', 'info');
                 break;
-
+            
+            /*
+            // --- BLOQUE DE ELIMINAR COMENTADO ---
             case 'eliminar':
                 $id = intval($_POST['id']);
                 if ($id > 0) {
@@ -124,6 +126,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['accion'])) {
                     $mensaje = mostrarAlerta('ID de producto no válido para eliminar.', 'error');
                 }
                 break;
+            */
         }
     } catch (PDOException $e) {
         $mensaje = mostrarAlerta('Error en la operación: ' . $e->getMessage(), 'error');
@@ -200,6 +203,8 @@ $productos = $stmt->fetchAll();
             <h1><i class="fas fa-boxes"></i> Gestión de Productos</h1>
             <div class="nav-buttons">
                 <a href="inventario_compras.php" class="btn-nav"><i class="fas fa-home"></i> volver a Dashboard</a>
+				<a href="marcas.php" class="btn-nav"><i class="fas fa-home"></i> crear marcas</a>
+				<a href="tipos_tecnologia.php" class="btn-nav"><i class="fas fa-home"></i> crear Tipos Tecnologia</a>
                 <a href="logout.php" class="btn-nav logout-btn"><i class="fas fa-sign-out-alt"></i> Cerrar Sesión</a>
             </div>
         </div>
@@ -295,6 +300,8 @@ $productos = $stmt->fetchAll();
                                                     <i class="fas fa-<?= $producto['estado'] == 'activo' ? 'toggle-off' : 'toggle-on' ?>"></i>
                                                 </button>
                                             </form>
+                                            
+                                            <!-- --- FORMULARIO DE ELIMINAR COMENTADO ---
                                             <form method="POST" action="productos.php" style="display: inline-block; margin: 0;" onsubmit="return confirm('¡PELIGRO! ¿Seguro de ELIMINAR este producto? Esta acción no se puede deshacer.');">
                                                 <input type="hidden" name="accion" value="eliminar">
                                                 <input type="hidden" name="id" value="<?= $producto['id'] ?>">
@@ -302,6 +309,7 @@ $productos = $stmt->fetchAll();
                                                     <i class="fas fa-trash-alt"></i>
                                                 </button>
                                             </form>
+                                            -->
                                         </td>
                                     </tr>
                                 <?php endforeach; ?>

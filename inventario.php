@@ -5,21 +5,30 @@ verificarLogin();
 
 // --- CREACIÓN DE TABLAS INICIALES ---
  $pdo->exec("CREATE TABLE IF NOT EXISTS productos ( id INT AUTO_INCREMENT PRIMARY KEY, nombre VARCHAR(255) NOT NULL, codigo VARCHAR(100) NOT NULL UNIQUE, part_number VARCHAR(100) NULL, descripcion TEXT, stock_actual INT DEFAULT 0, stock_minimo INT DEFAULT 0, fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP )");
- $pdo->exec("CREATE TABLE IF NOT EXISTS movimientos ( id INT AUTO_INCREMENT PRIMARY KEY, producto_id INT NOT NULL, tipo VARCHAR(50) NOT NULL, subtipo VARCHAR(50) NULL, cantidad INT NOT NULL, tecnico_id INT NULL, usuario_registro VARCHAR(255) NULL, fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE CASCADE )");
+ $pdo->exec("CREATE TABLE IF NOT EXISTS movimientos ( id INT AUTO_INCREMENT PRIMARY KEY, producto_id INT NOT NULL, tipo VARCHAR(50) NOT NULL, subtipo VARCHAR(50) NULL, cantidad INT NOT NULL, tecnico_id INT NULL, usuario_registro VARCHAR(255) NULL, notas TEXT NULL, fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE CASCADE )");
 
-// Agregar columna usuario_registro si no existe
+// Agregar columnas si no existen
 try {
     $sedes_temp = $pdo->query("SELECT tabla_movimientos FROM sedes WHERE activa = 1")->fetchAll(PDO::FETCH_ASSOC);
     foreach ($sedes_temp as $sede_temp) {
         $tabla_mov = $sede_temp['tabla_movimientos'];
-        $columns = $pdo->query("SHOW COLUMNS FROM `$tabla_mov` LIKE 'usuario_registro'")->fetchAll();
-        if (empty($columns)) {
+        
+        // Agregar columna usuario_registro si no existe
+        $columns_user = $pdo->query("SHOW COLUMNS FROM `$tabla_mov` LIKE 'usuario_registro'")->fetchAll();
+        if (empty($columns_user)) {
             $pdo->exec("ALTER TABLE `$tabla_mov` ADD COLUMN usuario_registro VARCHAR(255) NULL AFTER tecnico_id");
             error_log("Columna usuario_registro agregada a la tabla $tabla_mov");
         }
+        
+        // Agregar columna notas si no existe
+        $columns_notes = $pdo->query("SHOW COLUMNS FROM `$tabla_mov` LIKE 'notas'")->fetchAll();
+        if (empty($columns_notes)) {
+            $pdo->exec("ALTER TABLE `$tabla_mov` ADD COLUMN notas TEXT NULL AFTER usuario_registro");
+            error_log("Columna notas agregada a la tabla $tabla_mov");
+        }
     }
 } catch (Exception $e) {
-    error_log("Error al agregar columna usuario_registro: " . $e->getMessage());
+    error_log("Error al agregar columnas: " . $e->getMessage());
 }
 
 // --- FUNCIONES ---
@@ -79,18 +88,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['confirmar_movimiento']
     $tipo = limpiar($_POST['tipo']);
     $tecnico_id = !empty($_POST['tecnico_id']) ? intval($_POST['tecnico_id']) : NULL;
     $cantidad = abs(intval($_POST['cantidad']));
+    $notas = !empty($_POST['notas']) ? limpiar($_POST['notas']) : NULL;
     
     // Obtener el usuario logueado
     $usuario_registro = isset($_SESSION['usuario_nombre']) ? $_SESSION['usuario_nombre'] : 
                        (isset($_SESSION['nombre']) ? $_SESSION['nombre'] : 
                        (isset($_SESSION['email']) ? $_SESSION['email'] : 'Usuario desconocido'));
     
-    error_log("DEBUG - Valores a insertar: Producto ID: $producto_id | Tipo: $tipo | Cantidad: $cantidad | Técnico ID: " . ($tecnico_id ?? 'NULL'));
+    error_log("DEBUG - Valores a insertar: Producto ID: $producto_id | Tipo: $tipo | Cantidad: $cantidad | Técnico ID: " . ($tecnico_id ?? 'NULL') . " | Notas: " . ($notas ?? 'NULL'));
     
     $pdo->beginTransaction();
     try {
-        $stmt = $pdo->prepare("INSERT INTO `$tabla_movimientos` (producto_id, tipo, cantidad, tecnico_id, usuario_registro, fecha) VALUES (?, ?, ?, ?, ?, NOW())"); 
-        $result = $stmt->execute([$producto_id, $tipo, $cantidad, $tecnico_id, $usuario_registro]);
+        $stmt = $pdo->prepare("INSERT INTO `$tabla_movimientos` (producto_id, tipo, cantidad, tecnico_id, usuario_registro, notas, fecha) VALUES (?, ?, ?, ?, ?, ?, NOW())"); 
+        $result = $stmt->execute([$producto_id, $tipo, $cantidad, $tecnico_id, $usuario_registro, $notas]);
         
         if (!$result) {
             error_log("ERROR: Fallo al insertar movimiento");
@@ -167,6 +177,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['accion']) && $vista_ac
             $tipo = limpiar($_POST['tipo']);
             $tecnico_id = !empty($_POST['tecnico_id']) ? intval($_POST['tecnico_id']) : NULL;
             $cantidad = abs(intval($_POST['cantidad']));
+            $notas = !empty($_POST['notas']) ? limpiar($_POST['notas']) : NULL;
             
             // Obtener información del producto
             $stmt_producto = $pdo->prepare("SELECT nombre, stock_actual FROM `$tabla_productos` WHERE id = ?");
@@ -445,7 +456,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['accion']) && $vista_ac
                             'producto_id' => $producto_id,
                             'tipo' => $tipo,
                             'tecnico_id' => $tecnico_id,
-                            'cantidad' => $cantidad
+                            'cantidad' => $cantidad,
+                            'notas' => $notas
                         ]
                     ];
                     
@@ -482,17 +494,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['accion']) && $vista_ac
                     "Producto: <strong>{$nombre_producto}</strong>",
                     "Tipo de movimiento: <strong>{$tipo}</strong>",
                     "Cantidad: <strong>{$cantidad} unidades</strong>",
-                    "Técnico: <strong>{$tecnico_nombre}</strong>",
-                    "Stock actual: <strong>{$stock_disponible} unidades</strong>",
-                    "Stock después del movimiento: <strong style='color: " . ($nuevo_stock < $stock_disponible ? '#e74c3c' : ($nuevo_stock > $stock_disponible ? '#27ae60' : '#3498db')) . ";'>{$nuevo_stock} unidades</strong>"
+                    "Técnico: <strong>{$tecnico_nombre}</strong>"
                 ],
                 'datos' => [
                     'producto_id' => $producto_id,
                     'tipo' => $tipo,
                     'tecnico_id' => $tecnico_id,
-                    'cantidad' => $cantidad
+                    'cantidad' => $cantidad,
+                    'notas' => $notas
                 ]
             ];
+
+            if (!empty($notas)) {
+                $_SESSION['confirmacion_movimiento']['detalles'][] = "Notas: <strong>" . htmlspecialchars($notas) . "</strong>";
+            }
+
+            $_SESSION['confirmacion_movimiento']['detalles'][] = "Stock actual: <strong>{$stock_disponible} unidades</strong>";
+            $_SESSION['confirmacion_movimiento']['detalles'][] = "Stock después del movimiento: <strong style='color: " . ($nuevo_stock < $stock_disponible ? '#e74c3c' : ($nuevo_stock > $stock_disponible ? '#27ae60' : '#3498db')) . ";'>{$nuevo_stock} unidades</strong>";
             
             if ($tipo == 'Sobrantes') {
                 $_SESSION['confirmacion_movimiento']['detalles'][] = "⚠️ <strong>NOTA:</strong> Se validó que esta devolución no supera las entregas previas al técnico";
@@ -794,6 +812,7 @@ if ($vista_actual != 'vista_inventario_dashboard' && isset($sedes_config[$vista_
                     <input type="hidden" name="tipo" value="<?= $_SESSION['advertencia_instalacion']['datos']['tipo'] ?>">
                     <input type="hidden" name="tecnico_id" value="<?= $_SESSION['advertencia_instalacion']['datos']['tecnico_id'] ?>">
                     <input type="hidden" name="cantidad" value="<?= $_SESSION['advertencia_instalacion']['datos']['cantidad'] ?>">
+                    <input type="hidden" name="notas" value="<?= htmlspecialchars($_SESSION['advertencia_instalacion']['datos']['notas'] ?? '') ?>">
                     <button type="submit" class="btn btn-primary">
                         <i class="fas fa-check"></i> Continuar y Registrar
                     </button>
@@ -842,6 +861,7 @@ if ($vista_actual != 'vista_inventario_dashboard' && isset($sedes_config[$vista_
                     <input type="hidden" name="tipo" value="<?= $_SESSION['confirmacion_movimiento']['datos']['tipo'] ?>">
                     <input type="hidden" name="tecnico_id" value="<?= $_SESSION['confirmacion_movimiento']['datos']['tecnico_id'] ?>">
                     <input type="hidden" name="cantidad" value="<?= $_SESSION['confirmacion_movimiento']['datos']['cantidad'] ?>">
+                    <input type="hidden" name="notas" value="<?= htmlspecialchars($_SESSION['confirmacion_movimiento']['datos']['notas']) ?>">
                     <button type="submit" class="btn btn-primary">
                         <i class="fas fa-check"></i> Sí, Registrar
                     </button>
@@ -960,6 +980,10 @@ if ($vista_actual != 'vista_inventario_dashboard' && isset($sedes_config[$vista_
                                 <input type="number" name="cantidad" id="cantidad" min="1" step="1" required>
                             </div>
                         </div>
+                        <div class="form-group full-width">
+                            <label for="notas"><i class="fas fa-sticky-note"></i> Notas (Opcional)</label>
+                            <textarea name="notas" id="notas" rows="3" placeholder="Añada alguna observación sobre el movimiento..."></textarea>
+                        </div>
                         <input type="hidden" name="accion" value="validar_movimiento">
                         <button type="submit" class="btn btn-primary" style="margin-top:1rem;"><i class="fas fa-check"></i> Registrar Movimiento</button>
                     </form>
@@ -1009,6 +1033,7 @@ if ($vista_actual != 'vista_inventario_dashboard' && isset($sedes_config[$vista_
                                 <th>Técnico</th>
                                 <th>Fecha</th>
                                 <th>Registrado por</th>
+                                <th>Notas</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1057,6 +1082,13 @@ if ($vista_actual != 'vista_inventario_dashboard' && isset($sedes_config[$vista_
                                         <span class="usuario-badge"><i class="fas fa-user-circle"></i> <?= htmlspecialchars($m['usuario_registro']) ?></span>
                                     <?php else: ?>
                                         <span style="color: #999; font-style: italic;">No registrado</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <?php if (!empty($m['notas'])): ?>
+                                        <?= htmlspecialchars($m['notas']) ?>
+                                    <?php else: ?>
+                                        <span style="color: #999; font-style: italic;">N/A</span>
                                     <?php endif; ?>
                                 </td>
                             </tr>

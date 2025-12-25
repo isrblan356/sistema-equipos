@@ -2,7 +2,7 @@
 /*
 ================================================================================
 | MÓDULO PROFESIONAL DE GESTIÓN DE COMPRAS Y PRODUCTOS (TODO EN UNO)           |
-| Versión: 9.5 - Final: Confirma suma a stock y ajusta variable de sesión.     |
+| Versión: 10.0 - Edición de Compras con Detalle de Múltiples Productos        |
 | Descripción: Un sistema autocontenido para la gestión integral de compras,   |
 |              proveedores, productos e inventario.                            |
 ================================================================================
@@ -12,7 +12,7 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 
 // Incluir el archivo de configuración de base de datos y funciones
-require_once 'config.php';
+require_once 'config.php'; // Asegúrate de que este archivo exista y sea correcto.
 
 //==============================================================================
 // PARTE 1: DEFINICIÓN DE TODAS LAS CLASES
@@ -120,10 +120,32 @@ class ComprasManager
         if (!file_exists($this->uploadDir)) { mkdir($this->uploadDir, 0755, true); }
     }
     
+    // ================== CAMBIO REALIZADO ==================
+    // Se añade un método para obtener los productos de la tabla `compra_detalles`.
+    public function getDetallesByCompraId(int $compra_id): array {
+        $stmt = $this->db->prepare(
+            "SELECT cd.*, p.nombre as producto_nombre 
+             FROM compra_detalles cd
+             JOIN productos p ON cd.producto_id = p.id
+             WHERE cd.compra_id = :compra_id"
+        );
+        $stmt->execute(['compra_id' => $compra_id]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    // ================== CAMBIO REALIZADO ==================
+    // Se modifica getById para que también cargue los detalles de la compra.
     public function getById(int $id): ?array {
         $stmt = $this->db->prepare("SELECT c.*, p.nombre AS proveedor_nombre, p.nit AS proveedor_nit, p.contacto_nombre AS proveedor_contacto, p.direccion AS proveedor_direccion FROM compras c LEFT JOIN proveedores p ON c.proveedor_id = p.id WHERE c.id = :id");
         $stmt->execute(['id' => $id]);
-        return $stmt->fetch() ?: null;
+        $compra = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($compra) {
+            // ¡NUEVO! Adjuntamos los detalles del producto a la compra.
+            $compra['detalles'] = $this->getDetallesByCompraId($id);
+        }
+
+        return $compra ?: null;
     }
     
     public function getAll(string $filter = null, ?string $startDate = null, ?string $endDate = null): array {
@@ -177,7 +199,6 @@ class ComprasManager
             $stmt = $this->db->prepare("INSERT INTO movimientos (producto_id, tipo, cantidad, tecnico_id, usuario_registro, fecha) VALUES (?, 'Compras', ?, ?, ?, NOW())");
             $stmt->execute([$producto_id, $cantidad, $tecnico_id, $usuarioRegistro]);
             
-            // ESTA ES LA LÍNEA QUE SUMA LA CANTIDAD AL STOCK ACTUAL DEL PRODUCTO
             $updateStmt = $this->db->prepare("UPDATE productos SET stock_actual = stock_actual + ? WHERE id = ?");
             $updateStmt->execute([$cantidad, $producto_id]);
             
@@ -188,6 +209,8 @@ class ComprasManager
         }
     }
         
+    // ================== CAMBIO REALIZADO ==================
+    // El método `guardar` ha sido reescrito completamente para manejar la tabla `compra_detalles`.
     public function guardar(array $data, array $files, ?int $id = null): void {
         $this->validarDatos($data, $id);
 
@@ -197,25 +220,28 @@ class ComprasManager
             throw new Exception("No se recibieron datos de productos válidos.");
         }
         
+        // 1. Calcular totales a partir de las líneas de producto
         foreach ($data['tipo_producto'] as $key => $nombreProducto) {
             if (empty(trim($nombreProducto))) continue;
             $cantidad = (float)($data['cantidad'][$key] ?? 0);
             $precio_sin_iva = (float)($data['precio_sin_iva'][$key] ?? 0);
             $iva_porcentaje = (float)($data['iva_porcentaje'][$key] ?? 19);
-            $retefuente_linea = (float)($data['retefuente'][$key] ?? 0);
+            $retefuente_porcentaje = (float)($data['retefuente'][$key] ?? 0);
+            
             $subtotal_linea = $cantidad * $precio_sin_iva;
             $iva_linea = $subtotal_linea * ($iva_porcentaje / 100);
+            $retefuente_linea_valor = $subtotal_linea * ($retefuente_porcentaje / 100);
+            
             $totalSubtotal += $subtotal_linea;
             $totalIva += $iva_linea;
-            $totalRetefuente += $retefuente_linea;
-            $this->productManager->findOrCreateByName($nombreProducto, $data['part_number'][$key] ?? null);
+            $totalRetefuente += $retefuente_linea_valor;
         }
         
         $costo_envio = (float)($data['costo_envio'] ?? 0);
         $totalPagar = $totalSubtotal + $totalIva + $costo_envio - $totalRetefuente;
         
+        // 2. Procesar archivos adjuntos
         $archivo_orden = null; $archivo_factura = null;
-        
         if ($id) {
             $compra_actual = $this->getById($id);
             $archivo_orden = $this->procesarArchivo($files['archivo_orden'] ?? null, 'orden_') ?: ($compra_actual['archivo_orden'] ?? null);
@@ -227,17 +253,24 @@ class ComprasManager
             $producto_recibido_anterior = 'no';
         }
         
+        // 3. Preparar y ejecutar la inserción/actualización en la tabla `compras`
         $params = [
-            'proveedor_id' => $data['proveedor_id'], 'fecha_compra' => $data['fecha_compra'], 'orden_compra' => $data['orden_compra'], 
-            'numero_cotizacion' => $data['numero_cotizacion'] ?? null, 'part_number' => $data['part_number'][0] ?? null, 
-            'descripcion' => $data['descripcion'] ?? null, 'tipo_producto' => $data['tipo_producto'][0] ?? null, 
-            'cantidad' => array_sum($data['cantidad']), 'precio_sin_iva' => $totalSubtotal, 'costo_envio' => $costo_envio, 
-            'iva' => $totalIva, 'retefuente' => $totalRetefuente, 'total_pagar' => $totalPagar, 'terminos_pago' => $data['terminos_pago'] ?? 'Contado', 
-            'fecha_pago' => empty($data['fecha_pago']) ? null : $data['fecha_pago'], 'valor_pagado' => empty($data['valor_pagado']) ? null : (float)$data['valor_pagado'], 
-            'valor_factura' => empty($data['valor_factura']) ? null : (float)$data['valor_factura'], 'producto_recibido' => $data['producto_recibido'] ?? 'no', 
-            'fecha_recibido' => empty($data['fecha_recibido']) ? null : $data['fecha_recibido'], 'factura_recibida' => $data['factura_recibida'] ?? 'no', 
-            'pago_contraentrega' => isset($data['pago_contraentrega']) ? 1 : 0, 'valor_contra_entrega' => empty($data['valor_contra_entrega']) ? null : (float)$data['valor_contra_entrega'], 
-            'direccion_envio' => $data['direccion_envio'] ?? null, 'estado' => $data['estado'] ?? 'Ordenada', 
+            'proveedor_id' => $data['proveedor_id'], 'fecha_compra' => $data['fecha_compra'], 'orden_compra' => $data['orden_compra'],
+            'numero_cotizacion' => $data['numero_cotizacion'] ?? null,
+            'descripcion' => $data['descripcion'] ?? null,
+            'cantidad' => array_sum($data['cantidad']), // Cantidad total sumada
+            'precio_sin_iva' => $totalSubtotal, // Subtotal total
+            'costo_envio' => $costo_envio, 'iva' => $totalIva, 'retefuente' => $totalRetefuente, 'total_pagar' => $totalPagar,
+            'terminos_pago' => $data['terminos_pago'] ?? 'Contado',
+            'fecha_pago' => empty($data['fecha_pago']) ? null : $data['fecha_pago'],
+            'valor_pagado' => empty($data['valor_pagado']) ? null : (float)$data['valor_pagado'],
+            'valor_factura' => empty($data['valor_factura']) ? null : (float)$data['valor_factura'],
+            'producto_recibido' => $data['producto_recibido'] ?? 'no',
+            'fecha_recibido' => empty($data['fecha_recibido']) ? null : $data['fecha_recibido'],
+            'factura_recibida' => $data['factura_recibida'] ?? 'no',
+            'pago_contraentrega' => isset($data['pago_contraentrega']) ? 1 : 0,
+            'valor_contra_entrega' => empty($data['valor_contra_entrega']) ? null : (float)$data['valor_contra_entrega'],
+            'direccion_envio' => $data['direccion_envio'] ?? null, 'estado' => $data['estado'] ?? 'Ordenada',
             'notas' => $data['notas'] ?? null, 'novedades' => $data['novedades'] ?? null,
             'archivo_orden' => $archivo_orden, 'archivo_factura' => $archivo_factura
         ];
@@ -253,15 +286,43 @@ class ComprasManager
         
         $this->db->prepare($sql)->execute($params);
         
-        $producto_recibido_actual = $data['producto_recibido'] ?? 'no';
+        // Obtenemos el ID de la compra (sea el que se editó o el nuevo que se creó).
+        $compraId = $id ?: (int)$this->db->lastInsertId();
+
+        // 4. ¡NUEVO! Guardar los detalles en la tabla `compra_detalles`
+        // Si es una edición, borramos los detalles antiguos para reemplazarlos con los nuevos.
+        if ($id) {
+            $this->db->prepare("DELETE FROM compra_detalles WHERE compra_id = :id")->execute(['id' => $id]);
+        }
+
+        $stmtDetalle = $this->db->prepare(
+            "INSERT INTO compra_detalles (compra_id, producto_id, part_number, cantidad, precio_sin_iva, iva_porcentaje, retefuente_porcentaje) 
+             VALUES (:compra_id, :producto_id, :part_number, :cantidad, :precio_sin_iva, :iva_porcentaje, :retefuente_porcentaje)"
+        );
         
-        // =================================================================================================
-        // ¡ACCIÓN REQUERIDA! - AJUSTA ESTA LÍNEA A TU VARIABLE DE SESIÓN CORRECTA
-        // =================================================================================================
-        // Aquí debes reemplazar 'usuario_nombre' por la clave correcta donde guardas el NOMBRE del usuario en la sesión.
-        // Ejemplos comunes: $_SESSION['nombre'], $_SESSION['usuario'], $_SESSION['user']['name'], etc.
+        foreach ($data['tipo_producto'] as $key => $nombreProducto) {
+            if (empty(trim($nombreProducto))) continue;
+
+            $partNumber = $data['part_number'][$key] ?? null;
+            // Busca el producto por nombre o lo crea si no existe
+            $productoId = $this->productManager->findOrCreateByName($nombreProducto, $partNumber);
+
+            if ($productoId > 0) {
+                $stmtDetalle->execute([
+                    'compra_id' => $compraId,
+                    'producto_id' => $productoId,
+                    'part_number' => $partNumber,
+                    'cantidad' => (float)($data['cantidad'][$key] ?? 0),
+                    'precio_sin_iva' => (float)($data['precio_sin_iva'][$key] ?? 0),
+                    'iva_porcentaje' => (float)($data['iva_porcentaje'][$key] ?? 19),
+                    'retefuente_porcentaje' => (float)($data['retefuente'][$key] ?? 0)
+                ]);
+            }
+        }
+        
+        // 5. Registrar movimiento en inventario (esta lógica se mantiene igual)
+        $producto_recibido_actual = $data['producto_recibido'] ?? 'no';
         $usuarioLogueado = $_SESSION['usuario_nombre'] ?? 'Sistema';
-        // =================================================================================================
 
         if ($producto_recibido_actual === 'si' && (!$id || ($id && $producto_recibido_anterior === 'no'))) {
             foreach ($data['tipo_producto'] as $key => $productoNombre) {
@@ -279,6 +340,8 @@ class ComprasManager
         $compra = $this->getById($id);
         if ($compra && !empty($compra['archivo_orden']) && file_exists($this->uploadDir . $compra['archivo_orden'])) { @unlink($this->uploadDir . $compra['archivo_orden']); }
         if ($compra && !empty($compra['archivo_factura']) && file_exists($this->uploadDir . $compra['archivo_factura'])) { @unlink($this->uploadDir . $compra['archivo_factura']); }
+        // Al tener ON DELETE CASCADE en la base de datos, los detalles se borran automáticamente.
+        // Si no lo tienes, deberías añadir: $this->db->prepare("DELETE FROM compra_detalles WHERE compra_id = :id")->execute(['id' => $id]);
         $this->db->prepare("DELETE FROM compras WHERE id = :id")->execute(['id' => $id]);
     }
     
@@ -294,16 +357,22 @@ class ComprasManager
     }
 
     public function getInventorySummary(): array {
-        $sql = "SELECT tipo_producto, SUM(cantidad) as total_cantidad, COUNT(id) as numero_compras
-                FROM compras WHERE tipo_producto IS NOT NULL AND tipo_producto != '' 
-                GROUP BY tipo_producto ORDER BY total_cantidad DESC";
+        // Esta consulta ahora debería unirse con `compra_detalles` para ser más precisa
+        $sql = "SELECT p.nombre as tipo_producto, SUM(cd.cantidad) as total_cantidad, COUNT(DISTINCT c.id) as numero_compras
+                FROM compra_detalles cd
+                JOIN productos p ON cd.producto_id = p.id
+                JOIN compras c ON cd.compra_id = c.id
+                GROUP BY p.nombre ORDER BY total_cantidad DESC";
         return $this->db->query($sql)->fetchAll();
     }
     
     public function getPurchaseHistoryByProduct(string $productName): array {
-        $sql = "SELECT c.fecha_compra, c.cantidad, c.orden_compra, p.nombre as proveedor_nombre, c.id
-                FROM compras c LEFT JOIN proveedores p ON c.proveedor_id = p.id
-                WHERE c.tipo_producto = :product_name ORDER BY c.fecha_compra DESC";
+        $sql = "SELECT c.fecha_compra, cd.cantidad, c.orden_compra, p.nombre as proveedor_nombre, c.id
+                FROM compras c
+                JOIN proveedores p ON c.proveedor_id = p.id
+                JOIN compra_detalles cd ON c.id = cd.compra_id
+                JOIN productos prod ON cd.producto_id = prod.id
+                WHERE prod.nombre = :product_name ORDER BY c.fecha_compra DESC";
         $stmt = $this->db->prepare($sql);
         $stmt->execute(['product_name' => $productName]);
         return $stmt->fetchAll();
@@ -354,6 +423,11 @@ function render_header(string $titulo): void {
 <!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>{$titulo}</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"><style>:root{--color-primary:#4f46e5;--color-primary-light:#6366f1;--color-secondary:#10b981;--color-danger:#ef4444;--color-warning:#f59e0b;--color-info:#3b82f6;--color-bg:#f8fafc;--color-bg-card:#fff;--color-text:#111827;--color-text-muted:#6b7280;--color-border:#e2e8f0;--shadow:0 4px 6px -1px rgb(0 0 0 / .1), 0 2px 4px -2px rgb(0 0 0 / .1);--shadow-lg:0 10px 15px -3px rgb(0 0 0 / .1), 0 4px 6px -4px rgb(0 0 0 / .1);--border-radius:.75rem}*,::before,::after{box-sizing:border-box}body{margin:0;font-family:'Inter',sans-serif;background-color:var(--color-bg);color:var(--color-text);font-size:16px;line-height:1.6}.main-wrapper{display:flex;min-height:100vh}.sidebar{width:280px;background-color:var(--color-bg-card);padding:2rem 1.5rem;box-shadow:var(--shadow-lg);position:sticky;top:0;height:100vh;overflow-y:auto}.sidebar h2{font-size:1.5rem;text-align:center;margin:0 0 2.5rem;color:var(--color-primary);font-weight:700}.sidebar h2 .fa-cogs{margin-right:.5rem}.nav-menu a{display:flex;align-items:center;gap:.75rem;padding:1rem 1.25rem;border-radius:.75rem;color:var(--color-text-muted);text-decoration:none;font-weight:600;margin-bottom:.5rem;transition:all .3s ease}.nav-menu a:hover{background-color:var(--color-bg);color:var(--color-text);transform:translateX(4px)}.nav-menu a.active{background-color:var(--color-primary);color:#fff;box-shadow:var(--shadow)}.nav-menu .nav-section-title{padding:1.5rem 1.25rem .5rem;color:#9ca3af;font-weight:600;font-size:.8rem;text-transform:uppercase}.content-wrapper{flex-grow:1;padding:2rem;max-width:calc(100% - 280px)}h1,h2{font-weight:700;line-height:1.2}h1{font-size:2.5rem;color:var(--color-primary)}.page-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:2rem}h2{font-size:1.75rem;margin-bottom:1.5rem;padding-bottom:.75rem;border-bottom:2px solid var(--color-border);display:flex;align-items:center;gap:.75rem}.card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem;padding-bottom:.75rem;border-bottom:2px solid var(--color-border)}.card-header h2{border:none;padding:0;margin:0;font-size:1.75rem}.toggle-btn{background:none;border:2px solid var(--color-border);color:var(--color-text-muted);cursor:pointer;width:32px;height:32px;border-radius:50%;font-size:1rem;transition:all .3s ease}.toggle-btn:hover{background-color:var(--color-bg);color:var(--color-primary)}.alert{padding:1.25rem 1.5rem;margin-bottom:2rem;border-radius:var(--border-radius);display:flex;align-items:center;gap:.75rem;font-weight:500;box-shadow:var(--shadow)}.alert-success{background-color:#d1fae5;color:#065f46;border-left:4px solid var(--color-secondary)}.alert-error{background-color:#fee2e2;color:#991b1b;border-left:4px solid var(--color-danger)}.card{background-color:var(--color-bg-card);border-radius:var(--border-radius);box-shadow:var(--shadow);padding:2.5rem;margin-bottom:2rem;border:1px solid var(--color-border)}.collapsible-content{transition:all .4s ease-out;overflow:hidden;max-height:5000px}.collapsible-content.hidden{max-height:0;padding-top:0;padding-bottom:0;margin-top:0;opacity:0}.inventory-stats{display:flex;gap:2rem;justify-content:space-around;padding:1.5rem;background-color:var(--color-bg);border-radius:var(--border-radius);margin-bottom:2rem;text-align:center}.stat-item .stat-value{font-size:1.5rem;font-weight:700;color:var(--color-primary)}.stat-item .stat-label{font-size:0.9rem;color:var(--color-text-muted);text-transform:uppercase;margin-top:.25rem}fieldset{border:2px solid var(--color-border);border-radius:var(--border-radius);padding:2rem;margin-bottom:2rem}legend{font-weight:600;font-size:1.1rem;padding:0 1rem;color:var(--color-primary)}.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:1.5rem;margin-bottom:1.5rem}.form-group{display:flex;flex-direction:column}.form-label{font-weight:600;margin-bottom:.5rem;font-size:.95rem;color:var(--color-text)}.form-label .required{color:var(--color-danger)}.form-input,.form-select,.form-textarea{width:100%;padding:.875rem 1rem;border:2px solid var(--color-border);border-radius:.5rem;font-size:1rem;font-family:inherit;transition:all .3s ease;background-color:var(--color-bg-card)}.form-input:focus,.form-select:focus,.form-textarea:focus{outline:0;border-color:var(--color-primary);box-shadow:0 0 0 3px rgba(79,70,229,.1)}.form-input[readonly]{background-color:var(--color-bg);color:var(--color-text-muted)}.form-input[disabled]{background-color:var(--color-bg);color:var(--color-text-muted);cursor:not-allowed}.form-textarea{min-height:100px;resize:vertical}.option-group{display:flex;align-items:center;gap:2rem;margin-top:.5rem}.option-item{display:flex;align-items:center;gap:.5rem}.option-item input[type=radio],.option-item input[type=checkbox]{accent-color:var(--color-primary);transform:scale(1.1)}.summary{background:linear-gradient(135deg,var(--color-bg) 0%,#e2e8f0 100%);border-radius:var(--border-radius);padding:2rem;margin-top:2rem;border:2px solid var(--color-border)}.summary h3{margin-top:0;color:var(--color-primary);font-size:1.25rem}.summary-row{display:flex;justify-content:space-between;margin-bottom:.75rem;padding:.5rem 0}.summary-row.total{font-weight:700;font-size:1.3rem;border-top:3px solid var(--color-primary);padding-top:1rem;margin-top:1rem;color:var(--color-primary)}.summary-value{font-weight:600}.btn-container{display:flex;justify-content:flex-end;gap:1rem;margin-top:2.5rem;padding-top:2rem;border-top:2px solid var(--color-border)}.btn{padding:.875rem 2rem;border:none;border-radius:.75rem;font-weight:600;font-size:1rem;cursor:pointer;transition:all .3s ease;display:inline-flex;align-items:center;gap:.5rem;text-decoration:none;line-height:1.5;box-shadow:var(--shadow)}.btn-primary{background-color:var(--color-primary);color:#fff}.btn-primary:hover{background-color:var(--color-primary-light);transform:translateY(-2px);box-shadow:var(--shadow-lg)}.btn-secondary{background-color:var(--color-text-muted);color:#fff}.btn-secondary:hover{background-color:#4b5563;transform:translateY(-2px)}.btn-info{background-color:var(--color-info);color:#fff}.btn-info:hover{background-color:#2563eb;transform:translateY(-2px)}.btn-danger{background-color:var(--color-danger);color:#fff}.btn-danger:hover{background-color:#dc2626;transform:translateY(-2px)}.btn-warning{background-color:var(--color-warning);color:#fff}.btn-warning:hover{background-color:#d97706;transform:translateY(-2px)}.table-responsive{overflow-x:auto;border-radius:var(--border-radius);box-shadow:var(--shadow)}.data-table{width:100%;border-collapse:collapse;margin-top:1rem;background-color:var(--color-bg-card)}.data-table th,.data-table td{padding:1rem 1.25rem;text-align:left;border-bottom:1px solid var(--color-border);vertical-align:middle}.data-table th{background-color:var(--color-bg);font-weight:700;color:var(--color-text);text-transform:uppercase;font-size:.875rem;letter-spacing:.05em}.data-table tbody tr:hover{background-color:#f1f5f9}.status-badge{padding:.375rem 1rem;border-radius:9999px;font-size:.8rem;font-weight:600;text-transform:uppercase;white-space:nowrap;letter-spacing:.05em}.status-Ordenada{background-color:#dbeafe;color:#1e40af}.status-Enviada{background-color:#fef3c7;color:#92400e}.status-Completada{background-color:#d1fae5;color:#065f46}.status-Cancelada{background-color:#fee2e2;color:#991b1b}.dashboard-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:2rem;margin-bottom:3rem}.metric-card{display:flex;align-items:center;gap:1.5rem;background:linear-gradient(135deg,var(--color-bg-card) 0%,#f8fafc 100%);padding:2rem;border-radius:var(--border-radius);box-shadow:var(--shadow);border:2px solid var(--color-border);transition:transform .3s ease}.metric-card:hover{transform:translateY(-4px);box-shadow:var(--shadow-lg)}.metric-card .icon{font-size:2.5rem;width:70px;height:70px;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,var(--color-primary),var(--color-primary-light));border-radius:50%;flex-shrink:0;color:#fff;box-shadow:var(--shadow)}.metric-card .content{flex:1;min-width:0}.metric-card .content .value{font-size:2rem;font-weight:700;line-height:1;margin-bottom:.5rem;color:var(--color-text);overflow-wrap:break-word}.metric-card .content .label{font-size:1rem;color:var(--color-text-muted);font-weight:500}.actions-cell{white-space:nowrap}.actions-cell form{display:inline-block;margin:0 .25rem}.actions-cell .btn{padding:.5rem .75rem;font-size:.875rem}.file-info{margin-top:.5rem;padding:.5rem;background-color:var(--color-bg);border-radius:.375rem;font-size:.875rem;color:var(--color-text-muted)}.file-link{color:var(--color-primary);text-decoration:none;font-weight:500}.file-link:hover{text-decoration:underline}.provider-cell{display:flex;align-items:center;gap:1rem;font-weight:600}.provider-cell a{color:var(--color-text);text-decoration:none}.provider-cell a:hover{color:var(--color-primary)}.provider-avatar{width:40px;height:40px;border-radius:50%;color:#fff;font-weight:600;font-size:1rem;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;text-transform:uppercase}
 #loader{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background-color:rgba(0,0,0,.7);z-index:1000;backdrop-filter:blur(4px)}.spinner{position:absolute;top:50%;left:50%;width:60px;height:60px;border:6px solid rgba(255,255,255,.3);border-top:6px solid var(--color-primary);border-radius:50%;animation:spin 1s linear infinite}@keyframes spin{0%{transform:translate(-50%,-50%) rotate(0)}100%{transform:translate(-50%,-50%) rotate(360deg)}}@media (max-width:1024px){.main-wrapper{flex-direction:column}.sidebar{width:100%;height:auto;position:static}.content-wrapper{max-width:100%;padding:1.5rem}.form-grid,.dashboard-grid{grid-template-columns:1fr}}@media (max-width:768px){.btn-container{flex-direction:column}.btn{justify-content:center}}
 @media print{body *{visibility:hidden}.sidebar,.page-header,.nav-menu,.btn-container,.print-hide{display:none!important}#invoice-container,#invoice-container *{visibility:visible}#invoice-container{position:absolute;left:0;top:0;width:100%;padding:1rem;margin:0;border:none;box-shadow:none;background-color:#fff!important;}.print-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:2rem;padding-bottom:1.5rem;border-bottom:3px solid var(--color-primary)}.print-header .company-logo{font-size:2rem;font-weight:800;color:var(--color-primary)}.print-header .quote-info{text-align:right}.print-header .quote-title{font-size:1.8rem;font-weight:700;margin-bottom:.5rem}.print-parties{display:grid;grid-template-columns:1fr 1fr;gap:2rem;margin-bottom:2rem}.print-party-box .section-title{font-size:1.1rem;font-weight:600;color:var(--color-primary);margin-bottom:1rem;text-transform:uppercase;border-bottom:2px solid var(--color-border);padding-bottom:.5rem}.print-party-box p{margin:0.3rem 0;font-size:0.95rem}.print-item-title{display:block;margin-top:2rem;font-size:1.2rem;font-weight:600;color:var(--color-primary);text-transform:uppercase;padding-bottom:.5rem;border-bottom:2px solid var(--color-border)}.data-table{margin-top:1rem!important}.data-table th{background-color:#f8fafc!important}.print-totals{display:flex;justify-content:flex-end;margin-top:1.5rem}.print-totals table{width:40%}.print-totals td{padding:.5rem 1rem}.print-totals .total-row{font-weight:700;font-size:1.1rem;border-top:3px solid var(--color-primary)}.print-notes{border-top:2px solid var(--color-border);margin-top:2rem;padding-top:1.5rem}}
+input::-webkit-outer-spin-button,input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+input[type=number]{-moz-appearance:textfield}
+.product-line-fields-grid {display:grid;gap:1rem;align-items:end;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));}
+@media (min-width:992px){.product-line-fields-grid .form-group:nth-child(1),.product-line-fields-grid .form-group:nth-child(2){grid-column:span 2;}}
+@media (min-width:1400px){.product-line-fields-grid .form-group:nth-child(1){grid-column:span 3;}.product-line-fields-grid .form-group:nth-child(2){grid-column:span 2;}}
 </style></head><body><div id="loader"><div class="spinner"></div></div>
 HTML;
 }
@@ -469,7 +543,7 @@ function render_inventario_detalle_view(string $producto, array $historial): voi
             echo '<td><strong>' . e(number_format($item['cantidad'], 0)) . '</strong></td>';
             echo '<td>' . e($item['proveedor_nombre']) . '</td>';
             echo '<td>' . e($item['orden_compra']) . '</td>';
-            echo '<td class="actions-cell"><a href="?view=compra_detalle&id=' . e($item['id']) . '" class="btn btn-info" title="Ver Detalle de Compra"><i class="fas fa-eye"></i></a></td>';
+            echo '<td class="actions-cell"><a href="?view=compra_detalles&id=' . e($item['id']) . '" class="btn btn-info" title="Ver Detalle de Compra"><i class="fas fa-eye"></i></a></td>';
             echo '</tr>';
         }
     }
@@ -518,7 +592,7 @@ function render_proveedor_detalle_view(?array $proveedor, array $compras): void 
             echo '<tr><td><strong>'.e($c['orden_compra']).'</strong></td><td>'.date('d/m/Y', strtotime($c['fecha_compra'])).'</td><td><strong>'.format_cop($c['total_pagar']).'</strong></td><td><span class="status-badge status-'.e($c['estado']).'">'.e($c['estado']).'</span></td>';
             echo '<td>'; if ($c['producto_recibido'] === 'si') { echo '<i class="fas fa-check-circle" style="color: var(--color-secondary);"></i> Recibido'; } else { echo '<i class="fas fa-clock" style="color: var(--color-warning);"></i> Pendiente'; } echo '</td>';
             echo '<td>'; if ($c['factura_recibida'] === 'si') { echo '<i class="fas fa-file-invoice" style="color: var(--color-secondary);"></i> Recibida'; } else { echo '<i class="fas fa-file-invoice" style="color: var(--color-text-muted);"></i> Pendiente'; } echo '</td>';
-            echo '<td class="actions-cell"><a href="?view=compra_detalle&id='.e($c['id']).'" class="btn btn-info" title="Ver Detalle"><i class="fas fa-eye"></i></a> <a href="?view=compras_nueva&edit_id='.e($c['id']).'" class="btn btn-warning" title="Editar Compra"><i class="fas fa-edit"></i></a></td></tr>';
+            echo '<td class="actions-cell"><a href="?view=compra_detalles&id='.e($c['id']).'" class="btn btn-info" title="Ver Detalle"><i class="fas fa-eye"></i></a> <a href="?view=compras_nueva&edit_id='.e($c['id']).'" class="btn btn-warning" title="Editar Compra"><i class="fas fa-edit"></i></a></td></tr>';
         }
     }
     echo '</tbody></table></div></div>';
@@ -536,7 +610,7 @@ function render_compra_form_view(array $proveedores, ?array $compra_a_editar, ar
     if($is_edit) { echo "<input type='hidden' name='id' value='".e($compra_a_editar['id'])."'>"; }
 
     // SECCIÓN 1: ENCABEZADO
-    echo '<fieldset><legend><i class="fas fa-file-alt"></i> Encabezado de la Compra</legend><div class="form-grid" style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">';
+    echo '<fieldset><legend><i class="fas fa-file-alt"></i> Encabezado de la Compra</legend><div class="form-grid">';
     
     echo '<div class="form-group"><label for="proveedor_id" class="form-label">Proveedor <span class="required">*</span></label><select name="proveedor_id" id="proveedor_id" class="form-select" required><option value="">Seleccionar proveedor...</option>';
     foreach($proveedores as $prov) { $selected = ($is_edit && $compra_a_editar['proveedor_id'] == $prov['id']) ? 'selected' : ''; echo "<option value='".e($prov['id'])."' {$selected}>".e($prov['nombre'])."</option>"; }
@@ -552,7 +626,7 @@ function render_compra_form_view(array $proveedores, ?array $compra_a_editar, ar
     $terminos_options = ['Contado', 'Crédito 15 días', 'Crédito 30 días', 'Crédito 45 días', 'Crédito 60 días', 'Crédito 90 días'];
     foreach($terminos_options as $termino) { $selected = ($is_edit && $compra_a_editar['terminos_pago'] == $termino) ? 'selected' : ''; echo "<option value='".e($termino)."' {$selected}>".e($termino)."</option>"; }
     echo '</select></div>';
-    echo '<div class="form-group"><label for="costo_envio" class="form-label">Costo de Envío</label><input type="number" name="costo_envio" id="costo_envio" class="form-input calc-field" step="1" min="0" value="'.e($compra_a_editar['costo_envio'] ?? '0').'"></div>';
+    echo '<div class="form-group"><label for="costo_envio" class="form-label">Costo de Envío</label><input type="number" name="costo_envio" id="costo_envio" class="form-input calc-field" min="0" value="'.e($compra_a_editar['costo_envio'] ?? '0').'"></div>';
     echo '<div class="form-group"><label for="archivo_orden" class="form-label">Adjuntar Orden de Compra</label><input type="file" name="archivo_orden" id="archivo_orden" class="form-input" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.xml,.txt">';
     if ($is_edit && !empty($compra_a_editar['archivo_orden'])) { echo '<div class="file-info">Archivo actual: <a href="uploads/'.e($compra_a_editar['archivo_orden']).'" target="_blank" class="file-link">'.e($compra_a_editar['archivo_orden']).'</a></div>'; }
     echo '</div>';
@@ -562,56 +636,88 @@ function render_compra_form_view(array $proveedores, ?array $compra_a_editar, ar
     echo '<div class="form-group"><label class="form-label">¿Pago Contra Entrega?</label><div class="option-group"><div class="option-item">';
     $pago_contraentrega_checked = ($is_edit && !empty($compra_a_editar['pago_contraentrega'])) ? 'checked' : '';
     echo "<input type='checkbox' name='pago_contraentrega' id='pago_contraentrega' {$pago_contraentrega_checked}><label for='pago_contraentrega'>Sí, es pago contra entrega</label></div></div></div>";
-    echo '<div class="form-group" id="valor-contra-entrega-group" style="display:none;"><label for="valor_contra_entrega" class="form-label">Valor Contra Entrega</label><input type="number" name="valor_contra_entrega" id="valor_contra_entrega" class="form-input" step="1" min="0" value="'.e($compra_a_editar['valor_contra_entrega'] ?? '').'"></div></fieldset>';
+    echo '<div class="form-group" id="valor-contra-entrega-group" style="display:none;"><label for="valor_contra_entrega" class="form-label">Valor Contra Entrega</label><input type="number" name="valor_contra_entrega" id="valor_contra_entrega" class="form-input" min="0" value="'.e($compra_a_editar['valor_contra_entrega'] ?? '').'"></div></fieldset>';
 
-    // SECCIÓN 2: DETALLE DE COMPRA
+    // ================== CAMBIO REALIZADO ==================
+    // La lógica de renderizado de productos ahora distingue entre "crear" y "editar".
     echo '<fieldset><legend><i class="fas fa-dolly"></i> Detalle de Compra</legend>';
     echo '<!-- Contenedor para las líneas de producto -->';
     echo '<div id="product-lines-container">';
 
-    echo '<div class="product-line" style="background-color: var(--color-bg); padding: 1rem; border-radius: var(--border-radius); margin-bottom: 1rem;">';
-    echo '<div class="form-grid" style="grid-template-columns: 2fr 1.5fr 1fr 1fr 1fr 1fr 1fr 0.5fr; align-items: end; gap: 1rem;">';
-    
-    echo '<div class="form-group"><label class="form-label">Producto</label>';
-    echo '<input list="productos-lista" name="tipo_producto[]" class="form-input producto-nombre" placeholder="Seleccione o escriba..." value="'.e($compra_a_editar['tipo_producto'] ?? '').'" required>';
-    echo '<datalist id="productos-lista">';
-    foreach ($productos as $producto) {
-        $part_number = e($producto['part_number'] ?? '');
-        $product_name = e($producto['nombre']);
-        echo "<option value='{$product_name}' data-part-number='{$part_number}'>";
-    }
-    echo '</datalist></div>';
+    // Si es una edición y hay detalles, los recorremos para crear una línea por cada uno.
+    if ($is_edit && !empty($compra_a_editar['detalles'])) {
+        foreach ($compra_a_editar['detalles'] as $detalle) {
+            echo '<div class="product-line" style="background-color: var(--color-bg); padding: 1rem; border-radius: var(--border-radius); margin-bottom: 1rem;">';
+            echo '<div class="product-line-fields-grid">';
+            
+            // Campo Producto (Select) con el valor correcto seleccionado
+            echo '<div class="form-group"><label class="form-label">Producto <span class="required">*</span></label>';
+            echo '<select name="tipo_producto[]" class="form-select producto-nombre" required>';
+            echo '<option value="" disabled>Seleccione un producto...</option>';
+            foreach ($productos as $producto) {
+                $selected = ($detalle['producto_nombre'] === $producto['nombre']) ? 'selected' : '';
+                echo "<option value='" . e($producto['nombre']) . "' data-part-number='" . e($producto['part_number'] ?? '') . "' {$selected}>" . e($producto['nombre']) . "</option>";
+            }
+            echo '</select></div>';
 
-    echo '<div class="form-group"><label class="form-label">Nº de Parte</label><input type="text" name="part_number[]" class="form-input part-number-input" placeholder="Autocompletado..." value="'.e($compra_a_editar['part_number'] ?? '').'"></div>';
-    echo '<div class="form-group"><label class="form-label">Cantidad <span class="required">*</span></label><input type="number" name="cantidad[]" class="form-input calc-field" step="1" min="1" value="'.e($compra_a_editar['cantidad'] ?? '1').'" required></div>';
-    echo '<div class="form-group"><label class="form-label">Precio sin IVA <span class="required">*</span></label><input type="number" name="precio_sin_iva[]" class="form-input calc-field" step="1" min="0" value="'.e($compra_a_editar['precio_sin_iva'] ?? '').'" required></div>';
-    echo '<div class="form-group"><label class="form-label">IVA %</label><input type="number" name="iva_porcentaje[]" class="form-input calc-field" step="0.01" min="0" value="19"></div>';
-    echo '<div class="form-group"><label class="form-label">Valor IVA</label><input type="number" name="iva[]" class="form-input" step="1" min="0" value="'.e($compra_a_editar['iva'] ?? '0').'" readonly></div>';
-    echo '<div class="form-group"><label class="form-label">Retención</label><input type="number" name="retefuente[]" class="form-input calc-field" step="1" min="0" value="'.e($compra_a_editar['retefuente'] ?? '0').'"></div>';
-    
-    echo '<div class="form-group"><button type="button" class="btn btn-danger remove-product-line" style="display:none;"><i class="fas fa-trash"></i></button></div>';
-
-    echo '</div></div>';
-    
-    echo '</div>';
-    
-    if (!$is_edit) {
-        echo '<div class="btn-container" style="justify-content: flex-start; border-top: none; padding-top: 0; margin-top: 1rem;"><button type="button" id="add-product-btn" class="btn btn-info"><i class="fas fa-plus"></i> Agregar Producto</button></div>';
+            // Otros campos con sus valores correspondientes
+            echo '<div class="form-group"><label class="form-label">Nº de Parte</label><input type="text" name="part_number[]" class="form-input part-number-input" placeholder="Automático..." value="' . e($detalle['part_number'] ?? '') . '" readonly style="background-color: #f5f5f5;"></div>';
+            echo '<div class="form-group"><label class="form-label">Cantidad <span class="required">*</span></label><input type="number" name="cantidad[]" class="form-input calc-field" min="1" value="' . e($detalle['cantidad']) . '" required></div>';
+            echo '<div class="form-group"><label class="form-label">Precio Unitario sin IVA <span class="required">*</span></label><input type="number" name="precio_sin_iva[]" class="form-input calc-field" min="0" step="any" value="' . e($detalle['precio_sin_iva']) . '" required></div>';
+            echo '<div class="form-group"><label class="form-label">IVA %</label><input type="number" name="iva_porcentaje[]" class="form-input calc-field" step="0.01" min="0" value="' . e($detalle['iva_porcentaje'] ?? '19') . '"></div>';
+            echo '<div class="form-group"><label class="form-label">Total con IVA</label><input type="number" name="iva[]" class="form-input" min="0" value="0" readonly></div>';
+            echo '<div class="form-group"><label class="form-label">Retención %</label><input type="number" name="retefuente[]" class="form-input calc-field" step="0.01" min="0" value="' . e($detalle['retefuente_porcentaje'] ?? '0') . '"></div>';
+            echo '<div class="form-group"><button type="button" class="btn btn-danger remove-product-line"><i class="fas fa-trash"></i></button></div>';
+            
+            echo '</div></div>';
+        }
+    } else {
+        // Si es una compra nueva, mostramos una sola línea vacía como antes.
+        echo '<div class="product-line" style="background-color: var(--color-bg); padding: 1rem; border-radius: var(--border-radius); margin-bottom: 1rem;">';
+        echo '<div class="product-line-fields-grid">';
+        echo '<div class="form-group"><label class="form-label">Producto <span class="required">*</span></label>';
+        echo '<select name="tipo_producto[]" class="form-select producto-nombre" required>';
+        echo '<option value="" selected disabled>Seleccione un producto...</option>';
+        foreach ($productos as $producto) {
+            echo "<option value='" . e($producto['nombre']) . "' data-part-number='" . e($producto['part_number'] ?? '') . "'>" . e($producto['nombre']) . "</option>";
+        }
+        echo '</select></div>';
+        echo '<div class="form-group"><label class="form-label">Nº de Parte</label><input type="text" name="part_number[]" class="form-input part-number-input" placeholder="Automático..." readonly style="background-color: #f5f5f5;"></div>';
+        echo '<div class="form-group"><label class="form-label">Cantidad <span class="required">*</span></label><input type="number" name="cantidad[]" class="form-input calc-field" min="1" value="1" required></div>';
+        echo '<div class="form-group"><label class="form-label">Precio Unitario sin IVA <span class="required">*</span></label><input type="number" name="precio_sin_iva[]" class="form-input calc-field" min="0" step="any" value="" required></div>';
+        echo '<div class="form-group"><label class="form-label">IVA %</label><input type="number" name="iva_porcentaje[]" class="form-input calc-field" step="0.01" min="0" value="19"></div>';
+        echo '<div class="form-group"><label class="form-label">Total con IVA</label><input type="number" name="iva[]" class="form-input" min="0" value="0" readonly></div>';
+        echo '<div class="form-group"><label class="form-label">Retención %</label><input type="number" name="retefuente[]" class="form-input calc-field" step="0.01" min="0" value="0"></div>';
+        echo '<div class="form-group"><button type="button" class="btn btn-danger remove-product-line" style="display:none;"><i class="fas fa-trash"></i></button></div>';
+        echo '</div></div>';
     }
-    
+    echo '</div>'; // Fin de #product-lines-container
+
+    // El botón de "Agregar Producto" ahora es útil tanto para crear como para editar
+    echo '<div class="btn-container" style="justify-content: flex-start; border-top: none; padding-top: 0; margin-top: 1rem;"><button type="button" id="add-product-btn" class="btn btn-info"><i class="fas fa-plus"></i> Agregar Producto</button></div>';
+
     echo '<div class="form-grid" style="grid-template-columns:1fr"><div class="form-group"><label for="descripcion" class="form-label">Descripción General de la Compra</label><textarea name="descripcion" id="descripcion" class="form-textarea" placeholder="Descripción detallada de la compra en general...">'.e($compra_a_editar['descripcion'] ?? '').'</textarea></div></div>';
     echo '</fieldset>';
-
-
-    // SECCIÓN 3: RESUMEN FINANCIERO
-    echo '<fieldset><legend><i class="fas fa-calculator"></i> Resumen Financiero</legend>';
-    echo '<div class="summary" style="margin-top:0;"><h3><i class="fas fa-chart-line"></i> Resumen del Cálculo</h3><div class="summary-row"><span>Subtotal (Cantidad × Precio):</span><span class="summary-value" id="summary-subtotal">$0</span></div><div class="summary-row"><span>Costo de Envío:</span><span class="summary-value" id="summary-envio">$0</span></div><div class="summary-row"><span>IVA:</span><span class="summary-value" id="summary-iva">$0</span></div><div class="summary-row"><span>Retención en la Fuente:</span><span class="summary-value" id="summary-retefuente">-$0</span></div><div class="summary-row total"><span>Total a Pagar:</span><span class="summary-value" id="summary-total">$0</span></div></div></fieldset>';
     
-    // SECCIÓN 4: FINALIZACIÓN Y PAGO
+    // SECCIÓN 3: RESUMEN FINANCIERO (sin cambios)
+    echo '
+<fieldset>
+    <legend><i class="fas fa-calculator"></i> Resumen Financiero</legend>
+    <div class="summary" style="margin-top:0;">
+        <h3><i class="fas fa-chart-line"></i> Resumen del Cálculo</h3>
+        <div class="summary-row"><span>Subtotal (Cantidad × Precio):</span><span class="summary-value" id="summary-subtotal">$0</span></div>
+        <div class="summary-row"><span>IVA:</span><span class="summary-value" id="summary-iva">$0</span></div>
+        <div class="summary-row"><span>Retención en la Fuente:</span><span class="summary-value" id="summary-retefuente">-$0</span></div>
+        <div class="summary-row"><span>Costo de Envío:</span><span class="summary-value" id="summary-envio">$0</span></div>
+        <div class="summary-row total"><span>Total a Pagar:</span><span class="summary-value" id="summary-total">$0</span></div>
+    </div>
+</fieldset>';
+    
+    // SECCIÓN 4: FINALIZACIÓN Y PAGO (sin cambios)
     echo '<fieldset><legend><i class="fas fa-check-circle"></i> Finalización y Pago</legend><div class="form-grid">';
     echo '<div class="form-group"><label for="fecha_pago" class="form-label">Fecha de Pago</label><input type="date" name="fecha_pago" id="fecha_pago" class="form-input" value="'.e($compra_a_editar['fecha_pago'] ?? '').'"></div>';
-    echo '<div class="form-group"><label for="valor_pagado" class="form-label">Valor Pagado</label><input type="number" name="valor_pagado" id="valor_pagado" class="form-input diff-field" step="1" min="0" value="'.e($compra_a_editar['valor_pagado'] ?? '').'"></div>';
-    echo '<div class="form-group"><label for="valor_factura" class="form-label">Valor de la Factura</label><input type="number" name="valor_factura" id="valor_factura" class="form-input diff-field" step="1" min="0" value="'.e($compra_a_editar['valor_factura'] ?? '').'"></div>';
+    echo '<div class="form-group"><label for="valor_pagado" class="form-label">Valor Pagado</label><input type="number" name="valor_pagado" id="valor_pagado" class="form-input diff-field" min="0" value="'.e($compra_a_editar['valor_pagado'] ?? '').'"></div>';
+    echo '<div class="form-group"><label for="valor_factura" class="form-label">Valor de la Factura</label><input type="number" name="valor_factura" id="valor_factura" class="form-input diff-field" min="0" value="'.e($compra_a_editar['valor_factura'] ?? '').'"></div>';
     echo '<div class="form-group"><label for="diferencia" class="form-label">Diferencia (Factura - Pagado)</label><input type="text" id="diferencia" class="form-input" readonly></div>';
     echo '</div>';
     
@@ -649,13 +755,13 @@ function render_compras_historico_view(array $compras, ?string $startDate, ?stri
             echo '<tr><td><strong>'.e($c['orden_compra']).'</strong></td><td>'.e($c['proveedor_nombre'] ?? 'N/A').'</td><td>'.date('d/m/Y', strtotime($c['fecha_compra'])).'</td><td><strong>'.format_cop($c['total_pagar']).'</strong></td><td><span class="status-badge status-'.e($c['estado']).'">'.e($c['estado']).'</span></td>';
             echo '<td>'; if ($c['producto_recibido'] === 'si') { echo '<i class="fas fa-check-circle" style="color: var(--color-secondary);"></i> Recibido'; } else { echo '<i class="fas fa-clock" style="color: var(--color-warning);"></i> Pendiente'; } echo '</td>';
             echo '<td>'; if ($c['factura_recibida'] === 'si') { echo '<i class="fas fa-file-invoice" style="color: var(--color-secondary);"></i> Recibida'; } else { echo '<i class="fas fa-file-invoice" style="color: var(--color-text-muted);"></i> Pendiente'; } echo '</td>';
-            echo '<td class="actions-cell"><a href="?view=compra_detalle&id='.e($c['id']).'" class="btn btn-info" title="Ver Detalle"><i class="fas fa-eye"></i></a> <a href="?view=compras_nueva&edit_id='.e($c['id']).'" class="btn btn-warning" title="Editar"><i class="fas fa-edit"></i></a><form method="POST" style="display:inline;" onsubmit="return confirm(\'¿Estás seguro de eliminar esta compra?\');"><input type="hidden" name="action" value="eliminar_compra"><input type="hidden" name="id" value="'.e($c['id']).'"><button type="submit" class="btn btn-danger" title="Eliminar"><i class="fas fa-trash"></i></button></form></td></tr>';
+            echo '<td class="actions-cell"><a href="?view=compra_detalles&id='.e($c['id']).'" class="btn btn-info" title="Ver Detalle"><i class="fas fa-eye"></i></a> <a href="?view=compras_nueva&edit_id='.e($c['id']).'" class="btn btn-warning" title="Editar"><i class="fas fa-edit"></i></a><form method="POST" style="display:inline;" onsubmit="return confirm(\'¿Estás seguro de eliminar esta compra?\');"><input type="hidden" name="action" value="eliminar_compra"><input type="hidden" name="id" value="'.e($c['id']).'"><button type="submit" class="btn btn-danger" title="Eliminar"><i class="fas fa-trash"></i></button></form></td></tr>';
         }
     }
     echo '</tbody></table></div></div>';
 }
 
-function render_compra_detalle_view(?array $compra): void {
+function render_compra_detalles_view(?array $compra): void {
     if (!$compra) { echo '<h1>Compra no encontrada</h1><p>La compra que buscas no existe o ha sido eliminada.</p><a href="?view=compras_historico" class="btn btn-primary">Volver al Histórico</a>'; return; }
     
     echo '<div class="page-header print-hide"><h1><i class="fas fa-file-invoice-dollar"></i> Detalle de Compra</h1><div><button onclick="window.print()" class="btn btn-info"><i class="fas fa-print"></i> Imprimir</button> <a href="?view=compras_nueva&edit_id='.e($compra['id']).'" class="btn btn-warning"><i class="fas fa-edit"></i> Editar</a> <a href="?view=compras_historico" class="btn btn-secondary"><i class="fas fa-arrow-left"></i> Volver</a></div></div>';
@@ -690,19 +796,35 @@ function render_compra_detalle_view(?array $compra): void {
     echo '<div style="text-align: right;"><h2 style="margin:0; color: var(--color-primary);">ORDEN DE COMPRA</h2><p style="font-size: 1.2rem; font-weight: 600; margin: 0.5rem 0;">#'.e($compra['orden_compra']).'</p><p style="margin: 0;"><strong>Fecha:</strong> '.date('d/m/Y', strtotime($compra['fecha_compra'])).'</p><p style="margin: 0;"><strong>Estado:</strong> <span class="status-badge status-'.e($compra['estado']).'" style="display:inline-block; margin-top: 5px;">'.e($compra['estado']).'</span></p></div>';
     echo '</div>';
     echo '</div>';
-    echo '<div class="table-responsive"><table class="data-table"><thead><tr><th>Nº Cotización</th><th>Nº Parte</th><th>Descripción</th><th>Cantidad Total</th><th>Subtotal</th></tr></thead><tbody>';
-    $subtotal = $compra['precio_sin_iva'];
-    echo '<tr><td>'.e($compra['numero_cotizacion'] ?? 'N/A').'</td><td>'.e($compra['part_number'] ?? 'N/A').' (y otros)</td><td>'.nl2br(e($compra['descripcion'] ?? 'Múltiples productos en esta orden.')).'</td><td>'.e(number_format($compra['cantidad'], 0, ',', '.')).'</td><td>'.e(format_cop($subtotal)).'</td></tr>';
+
+    // ================== CAMBIO REALIZADO ==================
+    // La tabla de detalles ahora muestra los múltiples productos de `compra_detalles`.
+    echo '<div class="table-responsive"><table class="data-table"><thead><tr><th>Producto</th><th>Nº Parte</th><th>Cantidad</th><th>Precio Unitario</th><th>Subtotal</th></tr></thead><tbody>';
+    if (!empty($compra['detalles'])) {
+        foreach ($compra['detalles'] as $detalle) {
+            echo '<tr>';
+            echo '<td>' . e($detalle['producto_nombre']) . '</td>';
+            echo '<td>' . e($detalle['part_number'] ?? 'N/A') . '</td>';
+            echo '<td>' . e(number_format($detalle['cantidad'], 0, ',', '.')) . '</td>';
+            echo '<td>' . e(format_cop((float)$detalle['precio_sin_iva'])) . '</td>';
+            echo '<td>' . e(format_cop($detalle['cantidad'] * $detalle['precio_sin_iva'])) . '</td>';
+            echo '</tr>';
+        }
+    } else {
+        // Fallback por si no hay detalles, se usa la info de la tabla principal.
+        echo '<tr><td>'.e($compra['tipo_producto'] ?? 'Producto General').'</td><td>'.e($compra['part_number'] ?? 'N/A').'</td><td>'.e(number_format($compra['cantidad'], 0, ',', '.')).'</td><td>-</td><td>'.e(format_cop($compra['precio_sin_iva'])).'</td></tr>';
+    }
     echo '</tbody></table></div>';
+
     echo '<div class="print-totals" style="display: none" aria-hidden="true"><table>';
-    echo '<tr><td>Subtotal:</td><td style="text-align:right;">'.e(format_cop($subtotal)).'</td></tr>';
+    echo '<tr><td>Subtotal:</td><td style="text-align:right;">'.e(format_cop($compra['precio_sin_iva'])).'</td></tr>';
     echo '<tr><td>Costo de Envío:</td><td style="text-align:right;">'.e(format_cop($compra['costo_envio'])).'</td></tr>';
     echo '<tr><td>IVA:</td><td style="text-align:right;">'.e(format_cop($compra['iva'])).'</td></tr>';
     echo '<tr><td>Retención:</td><td style="text-align:right;">-'.e(format_cop($compra['retefuente'])).'</td></tr>';
     echo '<tr class="total-row"><td>TOTAL A PAGAR:</td><td style="text-align:right;">'.e(format_cop($compra['total_pagar'])).'</td></tr>';
     echo '</table></div>';
     echo '<div class="print-show" style="display: flex; justify-content: flex-end; margin-top: 2rem;"><div style="width: 400px;">';
-    echo '<div class="summary-row"><span>Subtotal:</span><span class="summary-value">'.e(format_cop($subtotal)).'</span></div>';
+    echo '<div class="summary-row"><span>Subtotal:</span><span class="summary-value">'.e(format_cop($compra['precio_sin_iva'])).'</span></div>';
     echo '<div class="summary-row"><span>Costo de Envío:</span><span class="summary-value">'.e(format_cop($compra['costo_envio'])).'</span></div>';
     echo '<div class="summary-row"><span>IVA:</span><span class="summary-value">'.e(format_cop($compra['iva'])).'</span></div>';
     echo '<div class="summary-row"><span>Retención en la Fuente:</span><span class="summary-value">-'.e(format_cop($compra['retefuente'])).'</span></div>';
@@ -799,15 +921,24 @@ function render_footer(): void {
         if(compraForm) {
             const productLinesContainer = document.getElementById('product-lines-container');
             const addProductBtn = document.getElementById('add-product-btn');
-            const productosDatalist = document.getElementById("productos-lista");
 
+            const updatePartNumber = (selectElement) => {
+                const productLine = selectElement.closest('.product-line');
+                const partNumberInput = productLine.querySelector('.part-number-input');
+                const selectedOption = selectElement.options[selectElement.selectedIndex];
+                
+                if (selectedOption && selectedOption.dataset.partNumber) {
+                    partNumberInput.value = selectedOption.dataset.partNumber;
+                } else {
+                    partNumberInput.value = '';
+                }
+            };
+            
             const inicializarListeners = (context) => {
-                const productoInput = context.querySelector(".producto-nombre");
-                const numeroParteInput = context.querySelector(".part-number-input");
-                if (productoInput && numeroParteInput && productosDatalist) {
-                    productoInput.addEventListener('input', function(event) {
-                        const option = Array.from(productosDatalist.options).find(opt => opt.value === event.target.value);
-                        numeroParteInput.value = option ? (option.dataset.partNumber || '') : '';
+                const productoSelect = context.querySelector(".producto-nombre");
+                if (productoSelect) {
+                    productoSelect.addEventListener('change', function() {
+                        updatePartNumber(this);
                     });
                 }
                 
@@ -815,6 +946,7 @@ function render_footer(): void {
                 if (removeBtn) {
                     removeBtn.addEventListener('click', function() {
                         this.closest('.product-line').remove();
+                        updateRemoveButtons();
                         calcularTotales();
                     });
                 }
@@ -825,15 +957,31 @@ function render_footer(): void {
                     const firstLine = productLinesContainer.querySelector('.product-line');
                     if (!firstLine) return;
                     const newLine = firstLine.cloneNode(true);
-                    newLine.querySelectorAll('input:not([type=radio]):not([type=checkbox])').forEach(input => input.value = '');
-                    newLine.querySelector('input[name="iva_porcentaje[]"]').value = '19';
+                    
+                    newLine.querySelector('select.producto-nombre').selectedIndex = 0;
+                    newLine.querySelector('.part-number-input').value = '';
                     newLine.querySelector('input[name="cantidad[]"]').value = '1';
-                    newLine.querySelector('.remove-product-line').style.display = 'inline-flex';
+                    newLine.querySelector('input[name="precio_sin_iva[]"]').value = '';
+                    newLine.querySelector('input[name="iva_porcentaje[]"]').value = '19';
+                    newLine.querySelector('input[name="iva[]"]').value = '0';
+                    newLine.querySelector('input[name="retefuente[]"]').value = '0';
+
                     productLinesContainer.appendChild(newLine);
                     inicializarListeners(newLine);
+                    updateRemoveButtons();
                     calcularTotales();
                 });
             }
+
+            const updateRemoveButtons = () => {
+                const lines = document.querySelectorAll('.product-line');
+                lines.forEach((line) => {
+                    const removeBtn = line.querySelector('.remove-product-line');
+                    if(removeBtn) {
+                        removeBtn.style.display = lines.length > 1 ? 'inline-flex' : 'none';
+                    }
+                });
+            };
 
             const formateadorCOP = val => new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",minimumFractionDigits:0,maximumFractionDigits:0}).format(val);
             
@@ -843,12 +991,13 @@ function render_footer(): void {
                     const cantidad = parseFloat(line.querySelector('input[name="cantidad[]"]').value) || 0;
                     const precio = parseFloat(line.querySelector('input[name="precio_sin_iva[]"]').value) || 0;
                     const ivaPorc = parseFloat(line.querySelector('input[name="iva_porcentaje[]"]').value) || 0;
-                    const retencion = parseFloat(line.querySelector('input[name="retefuente[]"]').value) || 0;
+                    const retencionPorc = parseFloat(line.querySelector('input[name="retefuente[]"]').value) || 0; // Ahora es un porcentaje
                     const subtotalLinea = cantidad * precio;
-                    const ivaLinea = subtotalLinea * ivaPorc / 100;
+                    const ivaLinea = subtotalLinea * (ivaPorc / 100);
+                    const retencionValor = subtotalLinea * (retencionPorc / 100); // Calcular el valor
                     subtotalTotal += subtotalLinea;
                     ivaTotal += ivaLinea;
-                    retencionTotal += retencion;
+                    retencionTotal += retencionValor; // Sumar el valor calculado
                     line.querySelector('input[name="iva[]"]').value = ivaLinea.toFixed(0);
                 });
                 const costoEnvio = parseFloat(compraForm.querySelector("#costo_envio").value) || 0;
@@ -898,6 +1047,7 @@ function render_footer(): void {
             });
 
             document.querySelectorAll('.product-line').forEach(inicializarListeners);
+            updateRemoveButtons();
             calcularTotales();
             calcularDiferencia();
             toggleContraentrega();
@@ -925,8 +1075,8 @@ HTML;
 //==============================================================================
 
 try {
-    $db = conectarDB();
-    
+    $db = conectarDB(); 
+
     $productManager   = new ProductManager($db);
     $proveedorManager = new ProveedorManager($db);
     $comprasManager   = new ComprasManager($db, $productManager); 
@@ -1023,10 +1173,10 @@ try {
             $compras_proveedor = $id ? $comprasManager->getByProveedorId($id) : [];
             render_proveedor_detalle_view($proveedor, $compras_proveedor);
             break;
-        case 'compra_detalle':
+        case 'compra_detalles':
             $id = (int)($_GET['id'] ?? 0);
             $compra = $id ? $comprasManager->getById($id) : null;
-            render_compra_detalle_view($compra);
+            render_compra_detalles_view($compra);
             break;
         case 'inventario_detalle':
             $producto = (string)($_GET['producto'] ?? '');
