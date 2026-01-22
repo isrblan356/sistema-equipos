@@ -20,10 +20,22 @@ if (isset($_GET['eliminar']) && is_numeric($_GET['eliminar'])) {
 
 // Procesar formulario de nuevo equipo y redirigir
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['accion']) && $_POST['accion'] == 'agregar') {
-    $nombre = limpiarDatos($_POST['nombre']); $modelo = limpiarDatos($_POST['modelo']); $marca = limpiarDatos($_POST['marca']); $numero_serie = limpiarDatos($_POST['numero_serie']); $tipo_equipo_id = $_POST['tipo_equipo_id']; $ubicacion = limpiarDatos($_POST['ubicacion']); $persona_responsable = limpiarDatos($_POST['persona_responsable']); $ip_address = limpiarDatos($_POST['ip_address']); $estado = $_POST['estado']; $fecha_instalacion = !empty($_POST['fecha_instalacion']) ? $_POST['fecha_instalacion'] : null;
+    $nombre = limpiarDatos($_POST['nombre']);
+    $descripcion = limpiarDatos($_POST['descripcion']); // AGREGADO
+    $modelo = limpiarDatos($_POST['modelo']);
+    $marca = limpiarDatos($_POST['marca']);
+    $numero_serie = limpiarDatos($_POST['numero_serie']);
+    $tipo_equipo_id = $_POST['tipo_equipo_id'];
+    $ubicacion = limpiarDatos($_POST['ubicacion']);
+    $persona_responsable = limpiarDatos($_POST['persona_responsable']);
+    $ip_address = limpiarDatos($_POST['ip_address']);
+    $estado = $_POST['estado'];
+    $fecha_instalacion = !empty($_POST['fecha_instalacion']) ? $_POST['fecha_instalacion'] : null;
+    
     try {
-        $stmt = $pdo->prepare("INSERT INTO equipos (nombre, modelo, marca, numero_serie, tipo_equipo_id, ubicacion, persona_responsable, ip_address, estado, fecha_instalacion, usuario_registro_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        $stmt->execute([$nombre, $modelo, $marca, $numero_serie, $tipo_equipo_id, $ubicacion, $persona_responsable, $ip_address, $estado, $fecha_instalacion, $_SESSION['usuario_id']]);
+        // MODIFICADO: Agregado campo descripcion
+        $stmt = $pdo->prepare("INSERT INTO equipos (nombre, descripcion, modelo, marca, numero_serie, tipo_equipo_id, ubicacion, persona_responsable, ip_address, estado, fecha_instalacion, usuario_registro_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        $stmt->execute([$nombre, $descripcion, $modelo, $marca, $numero_serie, $tipo_equipo_id, $ubicacion, $persona_responsable, $ip_address, $estado, $fecha_instalacion, $_SESSION['usuario_id']]);
         $_SESSION['mensaje_flash'] = 'Equipo agregado exitosamente.';
     } catch (PDOException $e) {
         $_SESSION['error_flash'] = 'Error al agregar equipo: ' . $e->getMessage();
@@ -100,14 +112,14 @@ $equipos = $stmt->fetchAll();
         .error { background-color: #fff1f2; color: #d93749; border-color: #ffb8bf; }
         .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1.5rem; }
         .form-group label { display: block; font-weight: 600; margin-bottom: 0.5rem; color: #555; }
-        input, select { font-family: inherit; font-size: 1rem; width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; transition: all 0.3s ease; }
-        input:focus, select:focus { outline: none; border-color: var(--primary-color); box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.15); }
+        input, select, textarea { font-family: inherit; font-size: 1rem; width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; transition: all 0.3s ease; }
+        input:focus, select:focus, textarea:focus { outline: none; border-color: var(--primary-color); box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.15); }
+        textarea { resize: vertical; min-height: 80px; }
         table { width: 100%; border-collapse: collapse; }
         th { background: #f8f9fa; color: #555; padding: 15px; text-align: left; font-weight: 600; border-bottom: 2px solid #eef; }
         td { padding: 15px; border-bottom: 1px solid #eef; vertical-align: middle; }
         tr:hover { background: #f8f9fa; }
         .badge { font-size: 0.8rem; padding: 0.4em 0.8em; border-radius: 20px; font-weight: 600; }
-        /* === CAMBIO REALIZADO AQUÍ === */
         .bg-success { background-color: #e7f5f2; color: #212529; } 
         .bg-warning { background-color: #fff8e1; color: #212529; }
         .bg-secondary { background-color: #f1f3f5; color: #212529; } 
@@ -125,6 +137,7 @@ $equipos = $stmt->fetchAll();
             <div class="nav-buttons">
                 <a class="btn-nav" href="dashboard.php"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
                 <a class="btn-nav active" href="equipos.php"><i class="fas fa-router"></i> Equipos</a>
+                <a class="btn-nav" href="tipos_equipo.php"><i class="fas fa-tags"></i> Tipos</a>
                 <a class="btn-nav" href="revisiones.php"><i class="fas fa-clipboard-check"></i> Revisiones</a>
                 <a class="btn-nav" href="reportes.php"><i class="fas fa-chart-bar"></i> Reportes</a>
                 <div class="user-info"><a href="perfil.php" style="text-decoration:none; color:inherit;"><i class="fas fa-user-circle"></i> <span><?= htmlspecialchars($_SESSION['usuario_nombre']); ?></span></a></div>
@@ -206,6 +219,7 @@ $equipos = $stmt->fetchAll();
                         <div class="row">
                             <div class="col-md-6"><div class="form-group"><label>Nombre del Equipo *</label><input type="text" name="nombre" class="form-control" required></div></div>
                             <div class="col-md-6"><div class="form-group"><label>Tipo de Equipo *</label><select name="tipo_equipo_id" class="form-select" required><option value="">Seleccionar...</option><?php foreach ($tipos_equipo as $tipo): ?><option value="<?= $tipo['id']; ?>"><?= htmlspecialchars($tipo['nombre']); ?></option><?php endforeach; ?></select></div></div>
+                            <div class="col-12"><div class="form-group"><label>Descripción</label><textarea name="descripcion" class="form-control" rows="3" placeholder="Descripción detallada del equipo..."></textarea></div></div>
                             <div class="col-md-6"><div class="form-group"><label>Marca *</label><input type="text" name="marca" class="form-control" required></div></div>
                             <div class="col-md-6"><div class="form-group"><label>Modelo *</label><input type="text" name="modelo" class="form-control" required></div></div>
                             <div class="col-md-6"><div class="form-group"><label>Número de Serie *</label><input type="text" name="numero_serie" class="form-control" required></div></div>

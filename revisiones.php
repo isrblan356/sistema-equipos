@@ -36,7 +36,7 @@ $filtro_fecha_hasta = isset($_GET['fecha_hasta']) ? $_GET['fecha_hasta'] : '';
 
 $equipos = $pdo->query("SELECT id, nombre FROM equipos ORDER BY nombre")->fetchAll();
 
-$sql = "SELECT r.*, e.nombre as equipo_nombre, e.modelo, e.marca, u.nombre as usuario_nombre FROM revisiones r LEFT JOIN equipos e ON r.equipo_id = e.id LEFT JOIN usuarios u ON r.usuario_id = u.id WHERE 1=1";
+$sql = "SELECT r.*, e.nombre as equipo_nombre, e.modelo, e.marca, e.persona_responsable, u.nombre as usuario_nombre FROM revisiones r LEFT JOIN equipos e ON r.equipo_id = e.id LEFT JOIN usuarios u ON r.usuario_id = u.id WHERE 1=1";
 $params = [];
 
 if (!empty($filtro_equipo)) { $sql .= " AND r.equipo_id = ?"; $params[] = $filtro_equipo; }
@@ -99,7 +99,7 @@ $revisiones = $stmt->fetchAll();
         .modal-header { background: linear-gradient(45deg, #f8f9fa, #e9ecef); border-bottom: 1px solid #ddd; }
         .modal-title { color: var(--text-color); font-weight: 600; }
         .modal-footer { border-top: 1px solid #eef; padding-top: 1rem; }
-        /* ===== NUEVOS ESTILOS PARA EL MODAL DE DETALLES ===== */
+        /* ===== ESTILOS PARA EL MODAL DE DETALLES ===== */
         .detail-group { margin-bottom: 1.75rem; }
         .detail-group h6 { font-size: 1.1rem; font-weight: 600; color: var(--primary-color); margin-bottom: 1rem; display: flex; align-items: center; gap: 10px; padding-bottom: 0.75rem; border-bottom: 1px solid #eef; }
         .detail-item { display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0.25rem; font-size: 0.95rem; border-bottom: 1px solid #f5f5f5; }
@@ -144,7 +144,7 @@ $revisiones = $stmt->fetchAll();
             <div class="card-header"><h3><i class="fas fa-list"></i> Lista de Revisiones (<?= count($revisiones); ?>)</h3></div>
             <div style="overflow-x: auto;">
                 <table>
-                    <thead><tr><th>Fecha</th><th>Equipo</th><th>Estado</th><th>Mediciones Clave</th><th>Técnico</th><th>Acciones</th></tr></thead>
+                    <thead><tr><th>Fecha</th><th>Equipo</th><th>Responsable</th><th>Estado</th><th>Técnico</th><th>Acciones</th></tr></thead>
                     <tbody>
                         <?php if (empty($revisiones)): ?>
                             <tr><td colspan="6" class="text-center p-5"><p class="text-muted mb-0">No se encontraron revisiones.</p></td></tr>
@@ -153,8 +153,8 @@ $revisiones = $stmt->fetchAll();
                                 <tr>
                                     <td><?= date('d/m/Y H:i', strtotime($revision['fecha_revision'])); ?></td>
                                     <td><strong><?= htmlspecialchars($revision['equipo_nombre']); ?></strong><br><small class="text-muted"><?= htmlspecialchars($revision['marca'] . ' ' . $revision['modelo']); ?></small></td>
+                                    <td><?= htmlspecialchars($revision['persona_responsable'] ?: 'N/A'); ?></td>
                                     <td><span class="badge bg-<?= strtolower($revision['estado_revision']); ?>"><?= $revision['estado_revision']; ?></span></td>
-                                    <td><small><?= $revision['temperatura'] ? 'Temp: '.$revision['temperatura'].'°C' : ''; ?> <?= $revision['señal_dbm'] ? '| Señal: '.$revision['señal_dbm'].'dBm' : ''; ?></small></td>
                                     <td><?= htmlspecialchars($revision['usuario_nombre']); ?></td>
                                     <td class="table-actions">
                                         <button type="button" class="btn btn-sm btn-outline-info" title="Ver detalle" data-bs-toggle="modal" data-bs-target="#modalDetalle<?= $revision['id']; ?>"><i class="fas fa-eye"></i></button>
@@ -170,7 +170,7 @@ $revisiones = $stmt->fetchAll();
         </div>
     </div>
 
-    <!-- ===== MODALES DE DETALLE REDISEÑADOS ===== -->
+    <!-- ===== MODALES DE DETALLE ===== -->
     <?php foreach ($revisiones as $revision): ?>
     <div class="modal fade" id="modalDetalle<?= $revision['id']; ?>" tabindex="-1">
         <div class="modal-dialog modal-lg modal-dialog-centered">
@@ -180,34 +180,32 @@ $revisiones = $stmt->fetchAll();
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body p-4">
-                    <div class="row">
-                        <div class="col-md-6 detail-group">
-                            <h6><i class="fas fa-info-circle"></i> Información General</h6>
-                            <div class="detail-item"><span class="detail-item-label">Equipo</span><span class="detail-item-value"><?= htmlspecialchars($revision['equipo_nombre']); ?></span></div>
-                            <div class="detail-item"><span class="detail-item-label">Fecha</span><span class="detail-item-value"><?= date('d/m/Y H:i', strtotime($revision['fecha_revision'])); ?></span></div>
-                            <div class="detail-item"><span class="detail-item-label">Estado</span><span class="detail-item-value"><span class="badge bg-<?= strtolower($revision['estado_revision']); ?>"><?= $revision['estado_revision']; ?></span></span></div>
-                            <div class="detail-item"><span class="detail-item-label">Técnico</span><span class="detail-item-value"><?= htmlspecialchars($revision['usuario_nombre']); ?></span></div>
-                        </div>
-                        <div class="col-md-6 detail-group">
-                            <h6><i class="fas fa-chart-line"></i> Mediciones Técnicas</h6>
-                            <div class="detail-item"><span class="detail-item-label">Temperatura</span><span class="detail-item-value"><?= $revision['temperatura'] ? $revision['temperatura'] . ' °C' : 'N/A'; ?></span></div>
-                            <div class="detail-item"><span class="detail-item-label">Voltaje</span><span class="detail-item-value"><?= $revision['voltaje'] ? $revision['voltaje'] . ' V' : 'N/A'; ?></span></div>
-                            <div class="detail-item"><span class="detail-item-label">Señal</span><span class="detail-item-value"><?= $revision['señal_dbm'] ? $revision['señal_dbm'] . ' dBm' : 'N/A'; ?></span></div>
-                            <div class="detail-item"><span class="detail-item-label">Velocidad</span><span class="detail-item-value"><?= $revision['velocidad_mbps'] ? $revision['velocidad_mbps'] . ' Mbps' : 'N/A'; ?></span></div>
-                        </div>
+                    <div class="detail-group">
+                        <h6><i class="fas fa-info-circle"></i> Información General</h6>
+                        <div class="detail-item"><span class="detail-item-label">Equipo</span><span class="detail-item-value"><?= htmlspecialchars($revision['equipo_nombre']); ?></span></div>
+                        <div class="detail-item"><span class="detail-item-label">Marca / Modelo</span><span class="detail-item-value"><?= htmlspecialchars($revision['marca'] . ' ' . $revision['modelo']); ?></span></div>
+                        <div class="detail-item"><span class="detail-item-label">Persona Responsable</span><span class="detail-item-value"><?= htmlspecialchars($revision['persona_responsable'] ?: 'N/A'); ?></span></div>
+                        <div class="detail-item"><span class="detail-item-label">Fecha</span><span class="detail-item-value"><?= date('d/m/Y H:i', strtotime($revision['fecha_revision'])); ?></span></div>
+                        <div class="detail-item"><span class="detail-item-label">Estado</span><span class="detail-item-value"><span class="badge bg-<?= strtolower($revision['estado_revision']); ?>"><?= $revision['estado_revision']; ?></span></span></div>
+                        <div class="detail-item"><span class="detail-item-label">Técnico</span><span class="detail-item-value"><?= htmlspecialchars($revision['usuario_nombre']); ?></span></div>
+                        <div class="detail-item"><span class="detail-item-label">Requiere Mantenimiento</span><span class="detail-item-value"><?= $revision['requiere_mantenimiento'] ? '<span class="badge" style="background:#fff8e1;color:#f59e0b;">Sí</span>' : '<span class="badge" style="background:#f1f3f5;color:#495057;">No</span>'; ?></span></div>
+                        <?php if ($revision['fecha_proximo_mantenimiento']): ?>
+                        <div class="detail-item"><span class="detail-item-label">Próximo Mantenimiento</span><span class="detail-item-value"><?= date('d/m/Y', strtotime($revision['fecha_proximo_mantenimiento'])); ?></span></div>
+                        <?php endif; ?>
                     </div>
-                    <?php if (!empty($revision['observaciones'])): ?>
-                    <div class="detail-group"><h6><i class="fas fa-comment"></i> Observaciones</h6><div class="detail-text-block"><?= nl2br(htmlspecialchars($revision['observaciones'])); ?></div></div>
-                    <?php endif; ?>
+
                     <?php if (!empty($revision['problemas_detectados'])): ?>
                     <div class="detail-group"><h6><i class="fas fa-exclamation-triangle text-warning"></i> Problemas Detectados</h6><div class="detail-text-block"><?= nl2br(htmlspecialchars($revision['problemas_detectados'])); ?></div></div>
                     <?php endif; ?>
+                    
                     <?php if (!empty($revision['acciones_realizadas'])): ?>
                     <div class="detail-group"><h6><i class="fas fa-tools text-success"></i> Acciones Realizadas</h6><div class="detail-text-block"><?= nl2br(htmlspecialchars($revision['acciones_realizadas'])); ?></div></div>
                     <?php endif; ?>
+                    
+                    <?php if (!empty($revision['observaciones'])): ?>
+                    <div class="detail-group"><h6><i class="fas fa-comment"></i> Observaciones</h6><div class="detail-text-block"><?= nl2br(htmlspecialchars($revision['observaciones'])); ?></div></div>
+                    <?php endif; ?>
                 </div>
-                <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button></div>
-            </div>
         </div>
     </div>
     <?php endforeach; ?>
