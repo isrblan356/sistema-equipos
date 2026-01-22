@@ -137,7 +137,7 @@ $equipos = $stmt->fetchAll();
             <div class="nav-buttons">
                 <a class="btn-nav" href="dashboard.php"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
                 <a class="btn-nav active" href="equipos.php"><i class="fas fa-router"></i> Equipos</a>
-                <a class="btn-nav" href="tipos_equipo.php"><i class="fas fa-tags"></i> Tipos</a>
+                <a class="btn-nav" href="tipos_equipo.php"><i class="fas fa-tags"></i> Tipos Equipos</a>
                 <a class="btn-nav" href="revisiones.php"><i class="fas fa-clipboard-check"></i> Revisiones</a>
                 <a class="btn-nav" href="reportes.php"><i class="fas fa-chart-bar"></i> Reportes</a>
                 <div class="user-info"><a href="perfil.php" style="text-decoration:none; color:inherit;"><i class="fas fa-user-circle"></i> <span><?= htmlspecialchars($_SESSION['usuario_nombre']); ?></span></a></div>
