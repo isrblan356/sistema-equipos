@@ -220,7 +220,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['accion']) && $vista_ac
                 }
             }
             
-            // VALIDACIÓN PARA SOBRANTES
+            // VALIDACIÓN PARA SOBRANTES - VERSIÓN FLEXIBLE
             if ($tipo == 'Sobrantes') {
                 if ($tecnico_id === NULL) {
                     $_SESSION['error_validacion'] = [
@@ -237,12 +237,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['accion']) && $vista_ac
                     exit();
                 }
                 
-                // Obtener totales de movimientos del técnico para este producto (solo ayer y hoy)
+                // Consultar TODO el historial del técnico para este producto
                 $stmt_preinstalaciones = $pdo->prepare("
                     SELECT COALESCE(SUM(cantidad), 0) as total_entregado 
                     FROM `$tabla_movimientos` 
                     WHERE producto_id = ? AND tecnico_id = ? AND tipo = 'Preinstalaciones'
-                    AND DATE(fecha) >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND DATE(fecha) <= CURDATE()
                 ");
                 $stmt_preinstalaciones->execute([$producto_id, $tecnico_id]);
                 $total_entregado = $stmt_preinstalaciones->fetchColumn();
@@ -251,7 +250,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['accion']) && $vista_ac
                     SELECT COALESCE(SUM(cantidad), 0) as total_instalado 
                     FROM `$tabla_movimientos` 
                     WHERE producto_id = ? AND tecnico_id = ? AND tipo = 'Instalaciones OK'
-                    AND DATE(fecha) >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND DATE(fecha) <= CURDATE()
                 ");
                 $stmt_instalaciones->execute([$producto_id, $tecnico_id]);
                 $total_instalado = $stmt_instalaciones->fetchColumn();
@@ -260,96 +258,56 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['accion']) && $vista_ac
                     SELECT COALESCE(SUM(cantidad), 0) as total_devuelto 
                     FROM `$tabla_movimientos` 
                     WHERE producto_id = ? AND tecnico_id = ? AND tipo = 'Sobrantes'
-                    AND DATE(fecha) >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND DATE(fecha) <= CURDATE()
                 ");
                 $stmt_sobrantes->execute([$producto_id, $tecnico_id]);
                 $total_devuelto = $stmt_sobrantes->fetchColumn();
                 
-                // Calcular el total que se reportaría con este nuevo movimiento
-                $total_reportado_con_nuevo = $total_instalado + $total_devuelto + $cantidad;
+                // CÁLCULO CORRECTO: Equipos que el técnico AÚN TIENE en su poder
+                // Fórmula: Entregado - Instalado - Ya Devuelto = Equipos Pendientes
+                $equipos_en_poder_tecnico = $total_entregado - $total_instalado - $total_devuelto;
                 
-                // VALIDACIÓN 1: Verificar que NO se esté devolviendo MÁS de lo entregado
-                if ($total_reportado_con_nuevo > $total_entregado) {
-                    $exceso = $total_reportado_con_nuevo - $total_entregado;
-                    $disponible_devolver = $total_entregado - ($total_instalado + $total_devuelto);
+                // VALIDACIÓN ÚNICA: Solo verificar que NO devuelva MÁS de lo que tiene
+                if ($cantidad > $equipos_en_poder_tecnico) {
+                    $exceso = $cantidad - $equipos_en_poder_tecnico;
                     
                     $_SESSION['error_validacion'] = [
-                        'titulo' => '❌ Error: Exceso en Sobrantes',
-                        'mensaje' => "Estás intentando devolver MÁS equipos de los que se entregaron al técnico.",
+                        'titulo' => '❌ Error: Intentas Devolver Más Equipos de los que Tienes',
+                        'mensaje' => "El técnico está intentando devolver más equipos de los que tiene actualmente en su poder.",
                         'detalles' => [
-                            "<strong style='color: #e74c3c;'>⚠️ PROBLEMA DETECTADO:</strong> El total reportado supera lo entregado",
+                            "<strong style='color: #e74c3c;'>⚠️ PROBLEMA DETECTADO:</strong> Exceso en devolución de equipos",
                             "",
-                            "<strong>📦 ENTREGAS (Preinstalaciones):</strong>",
-                            "• Total entregado al técnico: <strong style='color: #3498db;'>{$total_entregado} unidades</strong>",
+                            "<strong>📦 HISTORIAL COMPLETO DEL TÉCNICO:</strong>",
+                            "• Total recibido en Preinstalaciones: <strong style='color: #3498db;'>{$total_entregado} unidades</strong>",
+                            "• Instalaciones OK reportadas: <strong style='color: #27ae60;'>{$total_instalado} unidades</strong>",
+                            "• Sobrantes ya devueltos: <strong style='color: #f39c12;'>{$total_devuelto} unidades</strong>",
                             "",
-                            "<strong>📊 REPORTES DEL TÉCNICO:</strong>",
-                            "• Instalaciones OK (ya reportadas): <strong>{$total_instalado} unidades</strong>",
-                            "• Sobrantes (ya devueltos): <strong>{$total_devuelto} unidades</strong>",
-                            "• Sobrantes (intentando devolver ahora): <strong style='color: #e74c3c;'>{$cantidad} unidades</strong>",
+                            "<strong>🔢 CÁLCULO DE EQUIPOS EN PODER DEL TÉCNICO:</strong>",
+                            "• Fórmula: Entregado - Instalado - Devuelto = Equipos en Poder",
+                            "• Cálculo: {$total_entregado} - {$total_instalado} - {$total_devuelto} = <strong style='color: #3498db;'>{$equipos_en_poder_tecnico} unidades</strong>",
                             "",
-                            "<strong>🔢 CÁLCULO:</strong>",
-                            "• Total reportado = {$total_instalado} (Instalaciones) + {$total_devuelto} (Sobrantes previos) + {$cantidad} (Sobrantes ahora) = <strong style='color: #e74c3c;'>{$total_reportado_con_nuevo} unidades</strong>",
-                            "• Total entregado = <strong style='color: #3498db;'>{$total_entregado} unidades</strong>",
+                            "<strong>❌ PROBLEMA ACTUAL:</strong>",
+                            "• Equipos que el técnico tiene: <strong style='color: #3498db;'>{$equipos_en_poder_tecnico} unidades</strong>",
+                            "• Equipos que intenta devolver: <strong style='color: #e74c3c;'>{$cantidad} unidades</strong>",
+                            "• Exceso detectado: <strong style='color: #e74c3c;'>+{$exceso} unidades</strong>",
                             "",
-                            "<strong style='color: #e74c3c;'>❌ EXCESO DETECTADO: +{$exceso} unidades</strong>",
+                            "💡 <strong>SOLUCIÓN:</strong> El técnico solo puede devolver hasta <strong style='color: #27ae60;'>{$equipos_en_poder_tecnico} unidades</strong>",
                             "",
-                            "💡 <strong>SOLUCIÓN:</strong> Solo puedes devolver hasta <strong style='color: #27ae60;'>{$disponible_devolver} unidades</strong> en este momento"
+                            "ℹ️ <strong>NOTA:</strong> Esta validación es flexible - puedes devolver equipos de cualquier fecha, solo no puedes devolver más de lo que tienes"
                         ]
                     ];
                     
-                    error_log("VALIDACIÓN FALLIDA - Sobrantes EXCEDEN lo entregado | Producto: {$nombre_producto} | Técnico ID: {$tecnico_id}");
-                    error_log("  Entregado: {$total_entregado} | Instalado: {$total_instalado} | Devuelto: {$total_devuelto} | Intentando devolver: {$cantidad} | Total: {$total_reportado_con_nuevo}");
+                    error_log("VALIDACIÓN FALLIDA - Sobrantes EXCEDEN equipos en poder del técnico | Producto: {$nombre_producto} | Técnico ID: {$tecnico_id}");
+                    error_log("  Entregado: {$total_entregado} | Instalado: {$total_instalado} | Devuelto: {$total_devuelto} | En poder: {$equipos_en_poder_tecnico} | Intentando devolver: {$cantidad}");
                     header("Location: inventario.php?sede_id=" . $vista_actual); 
                     exit();
                 }
                 
-                // VALIDACIÓN 2: Verificar que NO falten equipos (que el total reportado sea igual a lo entregado)
-                // Esta validación solo se aplica si ya hay instalaciones reportadas
-                if ($total_instalado > 0) {
-                    $equipos_restantes = $total_entregado - $total_reportado_con_nuevo;
-                    
-                    if ($equipos_restantes > 0) {
-                        $_SESSION['error_validacion'] = [
-                            'titulo' => '⚠️ Advertencia: Faltan Equipos por Reportar',
-                            'mensaje' => "El técnico no ha reportado todos los equipos que se le entregaron. Faltan equipos por contabilizar.",
-                            'detalles' => [
-                                "<strong style='color: #f39c12;'>⚠️ INCONSISTENCIA DETECTADA:</strong> El total reportado es MENOR a lo entregado",
-                                "",
-                                "<strong>📦 ENTREGAS (Preinstalaciones):</strong>",
-                                "• Total entregado al técnico: <strong style='color: #3498db;'>{$total_entregado} unidades</strong>",
-                                "",
-                                "<strong>📊 REPORTES DEL TÉCNICO:</strong>",
-                                "• Instalaciones OK (ya reportadas): <strong>{$total_instalado} unidades</strong>",
-                                "• Sobrantes (ya devueltos): <strong>{$total_devuelto} unidades</strong>",
-                                "• Sobrantes (intentando devolver ahora): <strong>{$cantidad} unidades</strong>",
-                                "",
-                                "<strong>🔢 CÁLCULO:</strong>",
-                                "• Total reportado = {$total_instalado} (Instalaciones) + {$total_devuelto} (Sobrantes previos) + {$cantidad} (Sobrantes ahora) = <strong>{$total_reportado_con_nuevo} unidades</strong>",
-                                "• Total entregado = <strong style='color: #3498db;'>{$total_entregado} unidades</strong>",
-                                "",
-                                "<strong style='color: #e74c3c;'>❌ FALTAN: {$equipos_restantes} unidades por reportar</strong>",
-                                "",
-                                "💡 <strong>POSIBLES CAUSAS:</strong>",
-                                "• El técnico aún tiene equipos en su poder",
-                                "• Falta registrar más instalaciones o sobrantes",
-                                "• Puede haber equipos perdidos o dañados",
-                                "",
-                                "🔍 <strong>ACCIÓN REQUERIDA:</strong> Verificar con el técnico el estado de los {$equipos_restantes} equipos faltantes antes de continuar"
-                            ]
-                        ];
-                        
-                        error_log("VALIDACIÓN FALLIDA - FALTAN equipos por reportar | Producto: {$nombre_producto} | Técnico ID: {$tecnico_id}");
-                        error_log("  Entregado: {$total_entregado} | Instalado: {$total_instalado} | Devuelto: {$total_devuelto} | Intentando devolver: {$cantidad} | Total reportado: {$total_reportado_con_nuevo} | Faltan: {$equipos_restantes}");
-                        header("Location: inventario.php?sede_id=" . $vista_actual); 
-                        exit();
-                    }
-                }
-                
+                // Si la validación pasa, permitir el registro
                 error_log("VALIDACIÓN EXITOSA - Sobrantes: Producto: {$nombre_producto} | Técnico ID: {$tecnico_id} | Cantidad: {$cantidad}");
-                error_log("  Entregado: {$total_entregado} | Instalado: {$total_instalado} | Devuelto previo: {$total_devuelto} | Total después: {$total_reportado_con_nuevo}");
+                error_log("  Entregado: {$total_entregado} | Instalado: {$total_instalado} | Devuelto previo: {$total_devuelto} | En poder: {$equipos_en_poder_tecnico} | Quedará con: " . ($equipos_en_poder_tecnico - $cantidad));
             }
             
-            // VALIDACIÓN PARA INSTALACIONES OK - VERIFICAR QUE NO EXCEDA LAS PREINSTALACIONES
+            // VALIDACIÓN PARA INSTALACIONES OK - SIN RESTRICCIÓN DE 48 HORAS
             if ($tipo == 'Instalaciones OK') {
                 if ($tecnico_id === NULL) {
                     $_SESSION['error_validacion'] = [
@@ -366,12 +324,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['accion']) && $vista_ac
                     exit();
                 }
                 
-                // Obtener totales de preinstalaciones e instalaciones ok del técnico para este producto (solo ayer y hoy)
+                // *** CAMBIO IMPORTANTE: ELIMINAMOS LA RESTRICCIÓN DE 48 HORAS ***
+                // Ahora consultamos TODO el historial del técnico, sin límite de fechas
                 $stmt_preinstalaciones = $pdo->prepare("
                     SELECT COALESCE(SUM(cantidad), 0) as total_entregado 
                     FROM `$tabla_movimientos` 
                     WHERE producto_id = ? AND tecnico_id = ? AND tipo = 'Preinstalaciones'
-                    AND DATE(fecha) >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND DATE(fecha) <= CURDATE()
                 ");
                 $stmt_preinstalaciones->execute([$producto_id, $tecnico_id]);
                 $total_entregado = $stmt_preinstalaciones->fetchColumn();
@@ -380,7 +338,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['accion']) && $vista_ac
                     SELECT COALESCE(SUM(cantidad), 0) as total_instalado 
                     FROM `$tabla_movimientos` 
                     WHERE producto_id = ? AND tecnico_id = ? AND tipo = 'Instalaciones OK'
-                    AND DATE(fecha) >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND DATE(fecha) <= CURDATE()
                 ");
                 $stmt_instalaciones->execute([$producto_id, $tecnico_id]);
                 $total_instalado = $stmt_instalaciones->fetchColumn();
@@ -395,14 +352,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['accion']) && $vista_ac
                     
                     $_SESSION['error_validacion'] = [
                         'titulo' => '❌ Error: Exceso en Instalaciones OK',
-                        'mensaje' => "Estás intentando instalar MÁS equipos de los que se entregaron al técnico.",
+                        'mensaje' => "Estás intentando instalar MÁS equipos de los que se entregaron al técnico (histórico completo).",
                         'detalles' => [
                             "<strong style='color: #e74c3c;'>⚠️ PROBLEMA DETECTADO:</strong> El total instalado supera lo entregado",
                             "",
-                            "<strong>📦 ENTREGAS (Preinstalaciones):</strong>",
-                            "• Total entregado al técnico: <strong style='color: #3498db;'>{$total_entregado} unidades</strong>",
+                            "<strong>📦 ENTREGAS HISTÓRICAS (Preinstalaciones):</strong>",
+                            "• Total entregado al técnico (todo el tiempo): <strong style='color: #3498db;'>{$total_entregado} unidades</strong>",
                             "",
-                            "<strong>📊 REPORTES DEL TÉCNICO:</strong>",
+                            "<strong>📊 REPORTES DEL TÉCNICO (HISTÓRICOS):</strong>",
                             "• Instalaciones OK (ya reportadas): <strong>{$total_instalado} unidades</strong>",
                             "• Instalaciones OK (intentando reportar ahora): <strong style='color: #e74c3c;'>{$cantidad} unidades</strong>",
                             "",
@@ -412,11 +369,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['accion']) && $vista_ac
                             "",
                             "<strong style='color: #e74c3c;'>❌ EXCESO DETECTADO: +{$exceso} unidades</strong>",
                             "",
-                            "💡 <strong>SOLUCIÓN:</strong> Solo puedes instalar hasta <strong style='color: #27ae60;'>{$disponible_instalar} unidades</strong> en este momento"
+                            "💡 <strong>SOLUCIÓN:</strong> Solo puedes instalar hasta <strong style='color: #27ae60;'>{$disponible_instalar} unidades</strong> en este momento",
+                            "",
+                            "ℹ️ <strong>NOTA:</strong> Esta validación incluye TODOS los movimientos históricos, no solo los últimos 48 horas"
                         ]
                     ];
                     
-                    error_log("VALIDACIÓN FALLIDA - Instalaciones OK EXCEDEN lo entregado | Producto: {$nombre_producto} | Técnico ID: {$tecnico_id}");
+                    error_log("VALIDACIÓN FALLIDA - Instalaciones OK EXCEDEN lo entregado (histórico completo) | Producto: {$nombre_producto} | Técnico ID: {$tecnico_id}");
                     error_log("  Entregado: {$total_entregado} | Instalado previo: {$total_instalado} | Intentando instalar: {$cantidad} | Total: {$total_reportado_con_nuevo}");
                     header("Location: inventario.php?sede_id=" . $vista_actual); 
                     exit();
@@ -432,10 +391,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['accion']) && $vista_ac
                         'detalles' => [
                             "<strong style='color: #f39c12;'>⚠️ INCONSISTENCIA DETECTADA:</strong> El total instalado es MENOR a lo entregado",
                             "",
-                            "<strong>📦 ENTREGAS (Preinstalaciones):</strong>",
-                            "• Total entregado al técnico: <strong style='color: #3498db;'>{$total_entregado} unidades</strong>",
+                            "<strong>📦 ENTREGAS HISTÓRICAS (Preinstalaciones):</strong>",
+                            "• Total entregado al técnico (todo el tiempo): <strong style='color: #3498db;'>{$total_entregado} unidades</strong>",
                             "",
-                            "<strong>📊 REPORTES DEL TÉCNICO:</strong>",
+                            "<strong>📊 REPORTES DEL TÉCNICO (HISTÓRICOS):</strong>",
                             "• Instalaciones OK (ya reportadas): <strong>{$total_instalado} unidades</strong>",
                             "• Instalaciones OK (intentando reportar ahora): <strong>{$cantidad} unidades</strong>",
                             "",
@@ -450,7 +409,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['accion']) && $vista_ac
                             "• Falta registrar más instalaciones",
                             "• Puede haber equipos perdidos o dañados",
                             "",
-                            "🔍 <strong>ACCIÓN REQUERIDA:</strong> Verificar con el técnico el estado de los {$faltan_instalar} equipos faltantes antes de continuar"
+                            "🔍 <strong>ACCIÓN REQUERIDA:</strong> Verificar con el técnico el estado de los {$faltan_instalar} equipos faltantes antes de continuar",
+                            "",
+                            "ℹ️ <strong>NOTA:</strong> Esta validación incluye TODOS los movimientos históricos"
                         ],
                         'datos' => [
                             'producto_id' => $producto_id,
@@ -461,10 +422,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['accion']) && $vista_ac
                         ]
                     ];
                     
-                    error_log("VALIDACIÓN CON ADVERTENCIA - FALTAN equipos por instalar | Producto: {$nombre_producto} | Técnico ID: {$tecnico_id}");
+                    error_log("VALIDACIÓN CON ADVERTENCIA - FALTAN equipos por instalar (histórico completo) | Producto: {$nombre_producto} | Técnico ID: {$tecnico_id}");
                     error_log("  Entregado: {$total_entregado} | Instalado previo: {$total_instalado} | Intentando instalar: {$cantidad} | Total reportado: {$total_reportado_con_nuevo} | Faltan: {$faltan_instalar}");
                 } else {
-                    error_log("VALIDACIÓN EXITOSA - Instalaciones OK: Producto: {$nombre_producto} | Técnico ID: {$tecnico_id} | Cantidad: {$cantidad}");
+                    error_log("VALIDACIÓN EXITOSA - Instalaciones OK (histórico completo): Producto: {$nombre_producto} | Técnico ID: {$tecnico_id} | Cantidad: {$cantidad}");
                     error_log("  Entregado: {$total_entregado} | Instalado previo: {$total_instalado} | Total después: {$total_reportado_con_nuevo}");
                 }
             }
@@ -513,9 +474,28 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['accion']) && $vista_ac
             $_SESSION['confirmacion_movimiento']['detalles'][] = "Stock después del movimiento: <strong style='color: " . ($nuevo_stock < $stock_disponible ? '#e74c3c' : ($nuevo_stock > $stock_disponible ? '#27ae60' : '#3498db')) . ";'>{$nuevo_stock} unidades</strong>";
             
             if ($tipo == 'Sobrantes') {
-                $_SESSION['confirmacion_movimiento']['detalles'][] = "⚠️ <strong>NOTA:</strong> Se validó que esta devolución no supera las entregas previas al técnico";
+                // Calcular equipos que quedará con el técnico después de esta devolución
+                $stmt_hist_entregado = $pdo->prepare("SELECT COALESCE(SUM(cantidad), 0) FROM `$tabla_movimientos` WHERE producto_id = ? AND tecnico_id = ? AND tipo = 'Preinstalaciones'");
+                $stmt_hist_entregado->execute([$producto_id, $tecnico_id]);
+                $hist_entregado = $stmt_hist_entregado->fetchColumn();
+                
+                $stmt_hist_instalado = $pdo->prepare("SELECT COALESCE(SUM(cantidad), 0) FROM `$tabla_movimientos` WHERE producto_id = ? AND tecnico_id = ? AND tipo = 'Instalaciones OK'");
+                $stmt_hist_instalado->execute([$producto_id, $tecnico_id]);
+                $hist_instalado = $stmt_hist_instalado->fetchColumn();
+                
+                $stmt_hist_devuelto = $pdo->prepare("SELECT COALESCE(SUM(cantidad), 0) FROM `$tabla_movimientos` WHERE producto_id = ? AND tecnico_id = ? AND tipo = 'Sobrantes'");
+                $stmt_hist_devuelto->execute([$producto_id, $tecnico_id]);
+                $hist_devuelto = $stmt_hist_devuelto->fetchColumn();
+                
+                $equipos_actuales = $hist_entregado - $hist_instalado - $hist_devuelto;
+                $equipos_despues = $equipos_actuales - $cantidad;
+                
+                $_SESSION['confirmacion_movimiento']['detalles'][] = "📦 <strong>EQUIPOS EN PODER DEL TÉCNICO:</strong> {$equipos_actuales} unidades";
+                $_SESSION['confirmacion_movimiento']['detalles'][] = "📦 <strong>EQUIPOS DESPUÉS DE DEVOLUCIÓN:</strong> {$equipos_despues} unidades";
+                $_SESSION['confirmacion_movimiento']['detalles'][] = "✅ <strong>VALIDACIÓN:</strong> Devolución permitida (validación flexible sin límite de fechas)";
             } elseif ($tipo == 'Instalaciones OK') {
-                $_SESSION['confirmacion_movimiento']['detalles'][] = "⚠️ <strong>NOTA:</strong> Se validó que las instalaciones coinciden con las preinstalaciones realizadas";
+                $_SESSION['confirmacion_movimiento']['detalles'][] = "✅ <strong>VALIDACIÓN:</strong> Las instalaciones coinciden con las preinstalaciones históricas";
+                $_SESSION['confirmacion_movimiento']['detalles'][] = "ℹ️ <strong>NOTA:</strong> Se validó el historial completo (sin límite de 48 horas)";
             }
         }
     }
@@ -714,6 +694,22 @@ if ($vista_actual != 'vista_inventario_dashboard' && isset($sedes_config[$vista_
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes slideUp { from { transform: translateY(50px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+        
+        /* Nuevo estilo para destacar la mejora */
+        .info-banner {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 1rem 2rem;
+            margin: -2rem -2rem 2rem -2rem;
+            border-radius: 15px 15px 0 0;
+            text-align: center;
+            font-weight: 600;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .info-banner i {
+            margin-right: 10px;
+            font-size: 1.2rem;
+        }
     </style>
 </head>
 <body>
@@ -934,6 +930,10 @@ if ($vista_actual != 'vista_inventario_dashboard' && isset($sedes_config[$vista_
             
             <div class="content-grid">
                 <div class="card">
+                    <div class="info-banner">
+                        <i class="fas fa-info-circle"></i>
+                        <!--<strong>✨ SISTEMA FLEXIBLE:</strong> Los técnicos pueden devolver equipos en cualquier momento, de cualquier fecha - Solo se valida que no devuelvan más de lo que tienen en su poder -->
+                    </div>
                     <h3><i class="fas fa-people-carry"></i> Registrar Movimiento</h3>
                     <form method="POST" action="?sede_id=<?= $vista_actual ?>">
                         <div class="form-grid">

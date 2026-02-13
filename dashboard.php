@@ -265,7 +265,7 @@ if ($esAdmin && ($vista === 'permisos' || $vista === 'usuarios')) {
 <body>
     <div class="header">
         <div class="header-content">
-            <h1><i class="fas fa-cogs"></i> Sistema Unificado</h1>
+            <h1><i class="fas fa-cogs"></i> ControlaIT</h1>
             <div class="user-info">
                 <a href="perfil.php"><i class="fas fa-user-circle"></i> <span><?= htmlspecialchars($_SESSION['usuario_nombre']); ?> (<?= htmlspecialchars($_SESSION['usuario_rol']); ?>)</span></a>
                 <a class="logout-btn" href="logout.php"><i class="fas fa-sign-out-alt"></i> Cerrar Sesión</a>
@@ -278,9 +278,9 @@ if ($esAdmin && ($vista === 'permisos' || $vista === 'usuarios')) {
             <div class="main-container">
                 <div class="logo-section"><h2>Bienvenido, <?= htmlspecialchars($_SESSION['usuario_nombre']); ?></h2><p>Selecciona el módulo al que deseas acceder</p></div>
                 <div class="grid-container">
-                    <?php if (tienePermiso('permiso_equipos')): ?><a href="equipos.php" class="sistema-card"><div class="icon"><i class="fas fa-tools"></i></div><h3>Sistema de Equipos</h3><p>Gestión y mantenimiento de equipos.</p></a><?php endif; ?>
+                    <?php if (tienePermiso('permiso_equipos')): ?><a href="equipos.php" class="sistema-card"><div class="icon"><i class="fas fa-tools"></i></div><h3>Sistemas Internos</h3><p>Gestión y mantenimiento de equipos.</p></a><?php endif; ?>
                     <?php if (tienePermiso('permiso_inventario')): ?><a href="inventario.php" class="sistema-card"><div class="icon"><i class="fas fa-boxes"></i></div><h3>Sistema de Inventario</h3><p>Control de stock y movimientos.</p></a><?php endif; ?>
-                    <?php if (tienePermiso('permiso_portatiles')): ?><a href="portatiles.php" class="sistema-card"><div class="icon"><i class="fas fa-laptop"></i></div><h3>Inv. de Portátiles</h3><p>Revisión e inventario de laptops.</p></a><?php endif; ?>
+                    <?php if (tienePermiso('permiso_portatiles')): ?><a href="portatiles.php" class="sistema-card"><div class="icon"><i class="fas fa-laptop"></i></div><h3>Inv. de Hardware</h3><p>Revisión e inventario de laptops y otros.</p></a><?php endif; ?>
 					<?php if (tienePermiso('permiso_compras')): ?><a href="inventario_compras.php" class="sistema-card"><div class="icon"><i class="fas fa-shopping-cart"></i></div><h3>Compras y Servicios</h3><p>Gestión de compras y proveedores</p></a><?php endif; ?>
                     <?php if (esAdmin()): ?><a href="?vista=permisos" class="sistema-card"><div class="icon"><i class="fas fa-users-cog"></i></div><h3>Admin y Permisos</h3><p>Gestionar usuarios y acceso a módulos.</p></a><?php endif; ?>
 					

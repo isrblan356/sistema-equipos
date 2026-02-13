@@ -106,7 +106,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['accion'])) {
             $item_id_rev = intval($_POST['item_id']);
             $estado_revision = limpiarDatos($_POST['estado_revision']);
             $observaciones = limpiarDatos($_POST['observaciones']);
-            $nuevo_estado_item = limpiarDatos($_POST['nuevo_estado_item']);
+            $nuevo_estado_item = limpiarDatos($_POST['nuevo_estado_portatil']);
             $tecnico_id = $_SESSION['usuario_id'];
             $tabla = $hardware_types[$tipo_form]['tabla'];
             

@@ -165,7 +165,6 @@ if (isset($_GET['buscar'])) {
 }
 
 
-// (El resto del código PHP para PDF y CSV no cambia)
 // --- EXPORTAR A PDF ---
 if (isset($_GET['exportar']) && $_GET['exportar'] == 'pdf') {
     require('fpdf186/fpdf.php');
@@ -199,7 +198,8 @@ if (isset($_GET['exportar']) && $_GET['exportar'] == 'pdf') {
     $pdf->Cell(25, 7, 'Entregados', 1);
     $pdf->Cell(25, 7, 'Inst. OK', 1);
     $pdf->Cell(25, 7, 'Sobrantes', 1);
-    $pdf->Cell(25, 7, 'Devueltos', 1);
+    // *** MODIFICACIÓN 1: Comentar columna "Devueltos" en PDF ***
+    // $pdf->Cell(25, 7, 'Devueltos', 1);
     $pdf->Cell(25, 7, 'Diferencia', 1);
     $pdf->Cell(30, 7, 'Estado', 1);
     $pdf->Ln();
@@ -210,7 +210,8 @@ if (isset($_GET['exportar']) && $_GET['exportar'] == 'pdf') {
         $pdf->Cell(25, 6, $datos['validacion']['entregados'], 1, 0, 'C');
         $pdf->Cell(25, 6, $datos['instalaciones_ok'], 1, 0, 'C');
         $pdf->Cell(25, 6, $datos['sobrantes'], 1, 0, 'C');
-        $pdf->Cell(25, 6, $datos['validacion']['devueltos'], 1, 0, 'C');
+        // *** MODIFICACIÓN 2: Comentar valor "Devueltos" en PDF ***
+        // $pdf->Cell(25, 6, $datos['validacion']['devueltos'], 1, 0, 'C');
         $pdf->Cell(25, 6, $datos['validacion']['diferencia'], 1, 0, 'C');
 
         $estado = $datos['validacion']['estado'];
@@ -262,18 +263,20 @@ if (isset($_GET['exportar']) && $_GET['exportar'] == 'csv') {
     fputcsv($output, []);
 
     fputcsv($output, ['Resumen General por Tecnico']);
-    fputcsv($output, ['Tecnico', 'Entregados', 'Instalaciones OK', 'Sobrantes', 'Total Devueltos', 'Diferencia', 'Estado']);
+    // *** MODIFICACIÓN 3: Comentar "Total Devueltos" en encabezado CSV ***
+    fputcsv($output, ['Tecnico', 'Entregados', 'Instalaciones OK', 'Sobrantes', /* 'Total Devueltos', */ 'Diferencia', 'Estado']);
 
     foreach ($analisisTecnicos as $datos) {
         $estado = $datos['validacion']['estado'];
         $estadoTexto = $estado == 'ok' ? 'Cuadrado' : ($estado == 'debe' ? 'DEBE ' . abs($datos['validacion']['diferencia']) : 'A FAVOR ' . abs($datos['validacion']['diferencia']));
 
+        // *** MODIFICACIÓN 4: Comentar valor "Devueltos" en datos CSV ***
         fputcsv($output, [
             $datos['nombre'],
             $datos['validacion']['entregados'],
             $datos['instalaciones_ok'],
             $datos['sobrantes'],
-            $datos['validacion']['devueltos'],
+            // $datos['validacion']['devueltos'],
             $datos['validacion']['diferencia'],
             $estadoTexto
         ]);
@@ -435,7 +438,7 @@ if (isset($_GET['exportar']) && $_GET['exportar'] == 'csv') {
                     <div class="stats-grid">
                         <div class="stat-card"><h3><i class="fas fa-users"></i> Total Técnicos</h3><div class="value"><?= count($analisisTecnicos) ?></div></div>
                         <div class="stat-card success"><h3><i class="fas fa-box"></i> Equipos Entregados</h3><div class="value"><?= $totalEntregados ?></div></div>
-                        <div class="stat-card warning"><h3><i class="fas fa-undo"></i> Equipos Devueltos</h3><div class="value"><?= $totalDevueltos ?></div></div>
+                        <!-- <div class="stat-card warning"><h3><i class="fas fa-undo"></i> Equipos Devueltos</h3><div class="value"><?= $totalDevueltos ?></div></div> -->
                         <div class="stat-card <?= $tecnicosConDeuda > 0 ? 'danger' : 'success' ?>"><h3><i class="fas fa-exclamation-circle"></i> Técnicos con Deuda</h3><div class="value"><?= $tecnicosConDeuda ?></div></div>
                     </div>
                 </div>
@@ -450,7 +453,8 @@ if (isset($_GET['exportar']) && $_GET['exportar'] == 'csv') {
                                 <th><i class="fas fa-box-open"></i> Entregados</th>
                                 <th><i class="fas fa-check-circle"></i> Inst. OK</th>
                                 <th><i class="fas fa-plus-circle"></i> Sobrantes</th>
-                                <th><i class="fas fa-undo"></i> Total Devueltos</th>
+                                <!-- *** MODIFICACIÓN 5: Comentar encabezado "Total Devueltos" en tabla HTML *** -->
+                                <!-- <th><i class="fas fa-undo"></i> Total Devueltos</th> -->
                                 <th><i class="fas fa-minus-circle"></i> Desinstalaciones</th>
                                 <th><i class="fas fa-calculator"></i> Diferencia</th>
                                 <th><i class="fas fa-clipboard-check"></i> Estado</th>
@@ -459,8 +463,9 @@ if (isset($_GET['exportar']) && $_GET['exportar'] == 'csv') {
                         <tbody>
                             <?php foreach ($analisisTecnicos as $tecnicoId => $datos): ?>
                                 <!-- FILA DE CABECERA DEL TÉCNICO (SOLO INFORMATIVA) -->
+                                <!-- *** MODIFICACIÓN 6: Cambiar colspan de 8 a 7 *** -->
                                 <tr class="tecnico-header-row">
-                                    <td colspan="8">
+                                    <td colspan="7">
                                         <i class="fas fa-user-tie"></i> <?= htmlspecialchars($datos['nombre']) ?>
                                         <small style="opacity: 0.7;">(<?= $datos['total_movimientos'] ?> movimientos)</small>
                                     </td>
@@ -474,7 +479,8 @@ if (isset($_GET['exportar']) && $_GET['exportar'] == 'csv') {
                                             <td><strong><?= $cantidades['preinstalaciones'] ?></strong></td>
                                             <td><?= $cantidades['instalaciones_ok'] ?></td>
                                             <td><?= $cantidades['sobrantes'] ?></td>
-                                            <td><strong><?= $cantidades['devueltos'] ?></strong></td>
+                                            <!-- *** MODIFICACIÓN 7: Comentar valor "Total Devueltos" en tabla HTML *** -->
+                                            <!-- <td><strong><?= $cantidades['devueltos'] ?></strong></td> -->
                                             <td><?= $cantidades['desinstalaciones'] ?></td>
                                             <td><strong style="color: <?= $cantidades['diferencia'] == 0 ? '#28a745' : ($cantidades['diferencia'] > 0 ? '#dc3545' : '#17a2b8') ?>"><?= $cantidades['diferencia'] ?></strong></td>
                                             <td>
@@ -490,7 +496,7 @@ if (isset($_GET['exportar']) && $_GET['exportar'] == 'csv') {
                                     <?php endforeach; ?>
                                 <?php else: ?>
                                      <tr>
-                                        <td colspan="8" style="text-align: center; font-style: italic; padding-left: 40px;">No hay productos con movimientos para este técnico en el período seleccionado.</td>
+                                        <td colspan="7" style="text-align: center; font-style: italic; padding-left: 40px;">No hay productos con movimientos para este técnico en el período seleccionado.</td>
                                      </tr>
                                 <?php endif; ?>
                             <?php endforeach; ?>
